@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>시드링 - yettttie-bot-guide</title>
+        <title>시드링 - 예티 사용 설명서</title>
 
 
         <!-- Custom HTML head -->
@@ -110,13 +110,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">yettttie-bot-guide</h1>
+                    <h1 class="menu-title">예티 사용 설명서</h1>
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/yettttie/yettttie-bot-guide" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/yettttie/yettttie.github.io" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -187,6 +187,22 @@
 
         </div>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script type="text/javascript">
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
 

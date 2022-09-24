@@ -3,8 +3,8 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Page not found - yettttie-bot-guide</title>
-        <base href="/yettttie-bot-guide/">
+        <title>Page not found - 예티 사용 설명서</title>
+        <base href="/">
 
 
         <!-- Custom HTML head -->
@@ -111,13 +111,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">예티 봇 사용 설명서</h1>
+                    <h1 class="menu-title">예티 사용 설명서</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/yettttie/yettttie-bot-guide" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/yettttie/yettttie.github.io" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -147,7 +147,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="document-not-found-404"><a class="header" href="#document-not-found-404">Document not found (404)</a></h1>
-<p>이 URL은 없는 주소에요! 왼쪽에 있는 네비게이션 바로 다른 곳으로 이동해주세요!</p>
+<p>This URL is invalid, sorry. Please use the navigation bar or search to continue.</p>
 
                     </main>
 
@@ -166,6 +166,22 @@
 
         </div>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script type="text/javascript">
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
 
