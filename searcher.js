@@ -5,7 +5,8 @@ window.search = window.search || {};
     //
     // You can use !hasFocus() to prevent keyhandling in your key
     // event handlers while the user is typing their search.
-
+    search = encodeURI(search)
+    
     if (!Mark || !elasticlunr) {
         return;
     }
