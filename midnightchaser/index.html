@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <meta property="og:description" content="드림브레이커 살려내라"/>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />  
+  <meta property="og:description" content="드림브레이커가 좋아요"/>
   <meta property="og:image" content="./img/icon/hint.png"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="./style.css">
+  <script type="text/javascript" src="script.js"></script>
   <title>Midnight Chaser Helper</title>
 </head>
 <body>
@@ -15,40 +16,41 @@
       <table width=360 height=360 class="table">
         <tbody>
           <tr class="first">
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell11" onclick="selectCell('cell11-img')">
+              <img id="cell11-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell11-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell12" onclick="selectCell('cell12-img')">
+              <img id="cell12-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell12-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell13" onclick="selectCell('cell13-img')">
+              <img id="cell13-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell13-img')">
             </td>
           </tr>
           <tr class="second">
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell21" onclick="selectCell('cell21-img')">
+              <img id="cell21-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell21-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell22" onclick="selectCell('cell22-img')">
+              <img id="cell22-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell22-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell23" onclick="selectCell('cell23-img')">
+              <img id="cell23-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell23-img')">
             </td>
           </tr>
           <tr class="third">
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell31" onclick="selectCell('cell31-img')">
+              <img id="cell31-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell31-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell32" onclick="selectCell('cell32-img')">
+              <img id="cell32-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell32-img')">
             </td>
-            <td class="noBorder">
-              <img src="./img/icon/hint.png" width=100 height=100>
+            <td class="cell33" onclick="selectCell('cell33-img')">
+              <img id="cell33-img" src="./img/icon/hint.png" width=100 height=100 ondblclick="resetImg('cell33-img')">
             </td>
           </tr>
         </tbody>
       </table>
+      <button onclick="resetAll()" class="btn yellow rounded">초기화</button>
     </div>
   </div>
   <br/>
@@ -56,35 +58,36 @@
   <div class="description" width=360 height=360>
     <h3>위쪽 "?"를 클릭한 후 아래의 가구를 클릭하면 선택한 위치에 가구가 배치됩니다.</h3>
   </div>
+  <h4>위쪽 칸을 더블클릭하면 이미지가 초기화 됩니다.</h4>
   <hr>
   <br/>
   <div class="objects">
     <div class="original" id="오르골">
-      <img src="./img/original/오르골.png" width=100 height=100>
+      <img onclick="changeImg('오르골')" src="./img/original/오르골.png" width=100 height=100>
     </div>
     <div class="original" id="보석함">
-      <img src="./img/original/보석함.png" width=97 height=56>
+      <img onclick="changeImg('보석함')" src="./img/original/보석함.png" width=97 height=56>
     </div>
     <div class="original" id="전신거울">
-      <img src="./img/original/전신거울.png" width=66 height=106>
+      <img onclick="changeImg('전신거울')" src="./img/original/전신거울.png" width=66 height=106>
     </div>
     <div class="original" id="옷장">
-      <img src="./img/original/옷장.png" width=86 height=99>
+      <img onclick="changeImg('옷장')" src="./img/original/옷장.png" width=86 height=99>
     </div>
     <div class="original" id="침대">
-      <img src="./img/original/침대.png" width=100 height=75>
+      <img onclick="changeImg('침대')" src="./img/original/침대.png" width=100 height=75>
     </div>
     <div class="original" id="조각상">
-      <img src="./img/original/조각상.png" width=99 height=75>
+      <img onclick="changeImg('조각상')" src="./img/original/조각상.png" width=99 height=75>
     </div>
     <div class="original" id="쇼파">
-      <img src="./img/original/쇼파.png" width=94 height=69>
+      <img onclick="changeImg('쇼파')" src="./img/original/쇼파.png" width=94 height=69>
     </div>
     <div class="original" id="괘종시계">
-      <img src="./img/original/괘종시계.png" width=97 height=108>
+      <img onclick="changeImg('괘종시계')" src="./img/original/괘종시계.png" width=97 height=108>
     </div>
     <div class="original" id="피아노">
-      <img src="./img/original/피아노.png" width=99 height=69>
+      <img onclick="changeImg('피아노')" src="./img/original/피아노.png" width=99 height=69>
     </div>
   </div>
 </body>
