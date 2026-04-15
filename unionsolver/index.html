@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="메이플스토리 유니온 테트리스 배치 최적화 실험 페이지">
+  <meta property="og:title" content="메이플 유니온 테트리스 실험실">
+  <meta property="og:description" content="수동 보드 편집과 워커 기반 백트래킹으로 유니온 배치를 탐색하는 독립 페이지입니다.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="../_astro/main_logo.vngKxTZF.png">
+  <link rel="icon" href="../favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="../fonts/fonts.css">
+  <link rel="stylesheet" href="./style.css">
+  <script defer src="./app.js"></script>
+  <title>메이플 유니온 테트리스 실험실</title>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="title-block">
+        <a class="back-link" href="/">
+          <img src="../_astro/main_logo.vngKxTZF.png" alt="" width="800" height="608">
+          <span>Yettttie</span>
+        </a>
+        <h1>메이플 유니온 테트리스</h1>
+      </div>
+    </header>
+
+    <main class="tool-shell">
+      <section class="panel toolbar-panel">
+        <div class="toolbar-row toolbar-compact">
+          <div class="toolbar-options">
+            <label class="inline-field">
+              <span>타임아웃</span>
+              <input id="timeout-input" type="number" min="1" max="180" step="1" value="120">
+              <small>초 단위</small>
+            </label>
+            <label class="inline-field">
+              <span>탐색 로직</span>
+              <select id="solver-mode-select">
+                <option value="exact_cover">정확 탐색 (완전 탐색)</option>
+                <option value="branch_and_bound">최적화 탐색 (분기 한정 탐색)</option>
+                <option value="heuristic_fast">빠른 탐색 (휴리스틱 + 백트래킹)</option>
+                <option value="heuristic_pruned">강화 탐색 (휴리스틱 + 백트래킹 + 가지치기)</option>
+                <option value="heuristic_late_prune">후반 강화 탐색 (후반 가지치기)</option>
+              </select>
+            </label>
+          </div>
+          <div class="action-row">
+            <button id="solve-button" class="primary-button" type="button">자동 배치 시작</button>
+            <button id="stop-button" class="danger-button" type="button" disabled>중지</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-strip">
+        <div class="status-item"><span>목표 칸</span><strong id="target-count">0</strong></div>
+        <div class="status-item"><span>조각 칸</span><strong id="piece-count">0</strong></div>
+        <div class="status-item"><span>캐릭터 수</span><strong id="character-count">0</strong></div>
+        <div class="status-item"><span>상태</span><strong id="solver-status">대기</strong></div>
+        <div class="status-item"><span>경과 시간</span><strong id="elapsed-time">0.00s</strong></div>
+        <div class="status-item"><span>반복 횟수</span><strong id="iteration-count">0</strong></div>
+      </section>
+
+      <section class="workspace">
+        <section class="panel board-panel">
+          <div class="panel-header compact-header">
+            <div class="panel-title-row">
+              <h2>보드</h2>
+              <span id="board-caption" class="inline-caption">대기 중</span>
+            </div>
+            <div class="panel-actions">
+              <label class="toggle-field">
+                <input id="region-click-input" type="checkbox">
+                <span>지역 단위 선택</span>
+              </label>
+              <label
+                class="toggle-field"
+                title="실시간으로 화면을 갱신하므로 출력 시간이 추가되어 탐색이 더 느려질 수 있습니다."
+              >
+                <input id="live-solve-input" type="checkbox">
+                <span>실시간 보기</span>
+              </label>
+              <button id="clear-button" class="ghost-button" type="button">보드 초기화</button>
+            </div>
+          </div>
+
+          <div class="board-frame">
+            <div id="board-grid" class="board-grid" aria-label="유니온 보드"></div>
+          </div>
+        </section>
+
+        <aside class="panel piece-panel">
+          <div class="panel-header compact-header">
+            <h2>유니온 대원 수</h2>
+            <button id="clear-piece-button" class="ghost-button" type="button">캐릭터 초기화</button>
+          </div>
+          <div id="piece-list" class="piece-list"></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
