@@ -12,6 +12,8 @@ const PIECE_SHAPES = [
   { pieceId: "lv250_xenon" },
 ];
 
+const ASSET_VERSION = "20260416-branch-stop-2";
+
 let cancelled = false;
 let wasmExportsPromise = null;
 
@@ -259,7 +261,7 @@ async function getWasmExports() {
       return null;
     }
 
-    const response = await fetch("./solver-core.wasm");
+    const response = await fetch(`./solver-core.wasm?v=${ASSET_VERSION}`);
     if (!response.ok) {
       return null;
     }

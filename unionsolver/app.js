@@ -1,5 +1,6 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
+const ASSET_VERSION = "20260416-branch-stop-2";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
 const NEXON_API_BASE = "https://open.api.nexon.com/maplestory/v1";
@@ -823,7 +824,7 @@ function createWorker() {
     worker.terminate();
   }
 
-  worker = new Worker("./solver-worker.js");
+  worker = new Worker(`./solver-worker.js?v=${ASSET_VERSION}`);
   worker.addEventListener("message", handleWorkerMessage);
 }
 
