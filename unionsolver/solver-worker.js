@@ -112,7 +112,7 @@ async function solveWithWasmLive(data) {
     wasmExports.free_buffer(inputPtr, encoded.length);
     wasmExports.free_buffer(outputPtr, resultLength);
 
-    let result = decodeWasmResult(outputBytes, startTime);
+    let result = normalizeSolvedResult(decodeWasmResult(outputBytes, startTime), data.target);
     if (!result) {
       return null;
     }
@@ -155,10 +155,14 @@ async function solveWithWasmLive(data) {
       outputBytes = new Uint8Array(wasmExports.memory.buffer, outputPtr, resultLength).slice();
       wasmExports.free_buffer(outputPtr, resultLength);
 
-      result = decodeWasmResult(outputBytes, startTime);
+      result = normalizeSolvedResult(decodeWasmResult(outputBytes, startTime), data.target);
       if (!result) {
         return null;
       }
+    }
+
+    if (result.status === "ok" && typeof wasmExports.clear_live_session === "function") {
+      wasmExports.clear_live_session();
     }
 
     return { result };
@@ -213,7 +217,7 @@ async function solveWithWasm(data) {
     wasmExports.free_buffer(inputPtr, encoded.length);
     wasmExports.free_buffer(outputPtr, resultLength);
 
-    const result = decodeWasmResult(outputBytes, startTime);
+    const result = normalizeSolvedResult(decodeWasmResult(outputBytes, startTime), data.target);
     if (!result) {
       return null;
     }
@@ -373,6 +377,47 @@ function decodeWasmResult(bytes, startTime) {
     startTime,
     iterations,
   };
+}
+
+function normalizeSolvedResult(result, target) {
+  if (!result || result.status === "ok" || result.status === "cancelled") {
+    return result;
+  }
+
+  if (!placementsExactlyCoverTarget(result.placements, target)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    status: "ok",
+    message: undefined,
+  };
+}
+
+function placementsExactlyCoverTarget(placements, target) {
+  if (!Array.isArray(placements) || !Array.isArray(target) || target.length === 0) {
+    return false;
+  }
+
+  const targetSet = new Set(target);
+  const covered = new Set();
+
+  for (const placement of placements) {
+    if (!placement || !Array.isArray(placement.cells)) {
+      return false;
+    }
+
+    for (const cell of placement.cells) {
+      if (!targetSet.has(cell) || covered.has(cell)) {
+        return false;
+      }
+
+      covered.add(cell);
+    }
+  }
+
+  return covered.size === targetSet.size;
 }
 
 function postProgress({ statusMessage, startTime, iterations, placements }) {
