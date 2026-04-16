@@ -96,10 +96,61 @@
             <h2>유니온 대원 수</h2>
             <button id="clear-piece-button" class="ghost-button" type="button">캐릭터 초기화</button>
           </div>
+          <button id="nexon-api-button" class="nexon-api-button" type="button">NEXON OPEN API 사용</button>
           <div id="piece-list" class="piece-list"></div>
         </aside>
       </section>
     </main>
+
+    <footer class="site-footer">
+      <p>
+        제작: Yettttie · 루나/루네e · 문의:
+        <a class="footer-link-text" href="https://open.kakao.com/me/lu_ne" target="_blank" rel="noopener noreferrer">https://open.kakao.com/me/lu_ne</a>
+      </p>
+      <p>Data based on NEXON Open API</p>
+    </footer>
   </div>
+
+  <dialog id="nexon-dialog" class="nexon-dialog">
+    <div class="nexon-dialog-shell">
+      <div class="nexon-dialog-header">
+        <div>
+          <h2>NEXON OPEN API 캐릭터 선택</h2>
+          <p id="nexon-dialog-summary">API 키를 입력하고 캐릭터 목록을 불러오세요.</p>
+        </div>
+        <button id="nexon-dialog-close" class="icon-button" type="button" aria-label="닫기">×</button>
+      </div>
+
+      <div class="nexon-api-controls">
+        <label class="nexon-api-key-field">
+          <span class="nexon-api-key-label-row">
+            <span>NEXON OPEN API 키</span>
+            <a href="https://openapi.nexon.com/ko/my-application/" target="_blank" rel="noopener noreferrer">API 키 가져오기</a>
+          </span>
+          <input id="nexon-api-key-input" type="password" autocomplete="off" spellcheck="false">
+        </label>
+        <button id="nexon-load-button" class="primary-button" type="button">불러오기</button>
+      </div>
+
+      <div class="nexon-selection-controls">
+        <label class="inline-field">
+          <span>상위 선택</span>
+          <input id="nexon-top-count-input" type="number" min="0" max="0" step="1" value="0">
+          <small>명</small>
+        </label>
+        <button id="nexon-top-select-button" class="ghost-button" type="button">상위 공격대원 수 선택</button>
+        <button id="nexon-clear-selection-button" class="ghost-button" type="button">전부 해제하기</button>
+        <span id="nexon-selection-count" class="nexon-selection-count">0 / 0</span>
+      </div>
+
+      <div id="nexon-status" class="nexon-status">대기 중</div>
+      <div id="nexon-character-list" class="nexon-character-list" aria-label="캐릭터 목록"></div>
+
+      <div class="nexon-dialog-actions">
+        <button id="nexon-cancel-button" class="ghost-button" type="button">취소</button>
+        <button id="nexon-confirm-button" class="primary-button" type="button">확인</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

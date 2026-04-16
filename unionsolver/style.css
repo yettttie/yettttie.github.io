@@ -16,6 +16,9 @@
   --board-target: #dfeaf8;
   --board-target-line: #acc7eb;
   --board-hover: #e7edf5;
+  --board-cell-line: #c7d2df;
+  --solution-cell-line: rgba(24, 24, 24, 0.34);
+  --solution-piece-line: rgba(24, 24, 24, 0.72);
   --shadow: 0 8px 20px rgba(24, 24, 24, 0.08);
   --docs-accent-bg: #acc7eb;
   --docs-accent-bg-hover: #b4caea;
@@ -57,7 +60,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: var(--accent-strong);
+  color: var(--accent);
   text-decoration: none;
   font-weight: 800;
   font-size: 1.05rem;
@@ -318,6 +321,270 @@ select {
   text-align: right;
 }
 
+.nexon-api-button {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid var(--docs-accent-bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--docs-accent-text);
+  background: var(--docs-accent-bg);
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.nexon-api-button:hover {
+  border-color: var(--docs-accent-bg-hover);
+  background: var(--docs-accent-bg-hover);
+}
+
+.nexon-dialog {
+  width: min(760px, calc(100% - 24px));
+  max-height: min(760px, calc(100% - 24px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow: 0 18px 50px rgba(24, 24, 24, 0.22);
+}
+
+.nexon-dialog::backdrop {
+  background: rgba(24, 24, 24, 0.42);
+}
+
+.nexon-dialog-shell {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(180px, 1fr) auto;
+  max-height: min(760px, calc(100vh - 24px));
+  padding: 16px;
+  gap: 12px;
+}
+
+.nexon-dialog-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.nexon-dialog-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.nexon-dialog-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.9rem;
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg-surface);
+  cursor: pointer;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.nexon-api-controls,
+.nexon-selection-controls,
+.nexon-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nexon-api-controls {
+  align-items: flex-end;
+}
+
+.nexon-api-controls .primary-button {
+  min-height: 38px;
+}
+
+.nexon-api-key-field {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 280px;
+}
+
+.nexon-api-key-field span {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.nexon-api-key-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nexon-api-key-label-row a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid var(--docs-secondary-border);
+  border-radius: 7px;
+  color: var(--accent-strong);
+  background: var(--bg-surface);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nexon-api-key-label-row a:hover {
+  border-color: var(--docs-secondary-border-hover);
+  color: var(--accent);
+  background: var(--bg-panel);
+}
+
+.nexon-api-key-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.nexon-selection-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+.nexon-status {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--bg-surface);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.nexon-status.error {
+  color: #7f1d1d;
+  border-color: #f0b4b4;
+  background: #fff1f1;
+}
+
+.nexon-character-list {
+  display: grid;
+  gap: 8px;
+  min-height: 180px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.nexon-character-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.nexon-character-row.selected {
+  border-color: var(--docs-accent-bg);
+  background: #edf4fd;
+}
+
+.nexon-character-row input {
+  margin: 0;
+}
+
+.nexon-character-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nexon-character-main strong,
+.nexon-character-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexon-character-main strong {
+  font-size: 0.95rem;
+}
+
+.nexon-character-main span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.nexon-piece-preview {
+  display: grid;
+  gap: 0;
+  align-self: center;
+  justify-self: end;
+  border: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.nexon-piece-preview.empty {
+  width: 26px;
+  height: 18px;
+  border-style: dashed;
+}
+
+.nexon-piece-preview-cell {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--line);
+  background: var(--board-empty);
+}
+
+.nexon-piece-preview-cell.active {
+  border-color: rgba(243, 240, 255, 0.18);
+  background: var(--piece-color);
+}
+
+.nexon-character-badge {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--bg-panel);
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.nexon-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.nexon-dialog-actions {
+  justify-content: flex-end;
+}
+
 .inline-field {
   display: inline-flex;
   align-items: center;
@@ -425,7 +692,7 @@ select {
 }
 
 .board-cell.solution {
-  border-color: rgba(243, 240, 255, 0.18);
+  border-color: var(--solution-cell-line);
 }
 
 .piece-note {
@@ -433,6 +700,34 @@ select {
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.5;
+}
+
+.site-footer {
+  margin-top: 18px;
+  padding: 14px 4px 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.site-footer p {
+  margin: 3px 0;
+}
+
+.site-footer a {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.footer-link-text {
+  word-break: break-all;
 }
 
 @media (max-width: 1100px) {
@@ -459,6 +754,35 @@ select {
 
   .piece-row {
     grid-template-columns: 44px minmax(0, 1fr) 64px;
+  }
+
+  .nexon-dialog-shell {
+    padding: 12px;
+  }
+
+  .nexon-api-key-label-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .nexon-selection-count {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .nexon-character-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nexon-piece-preview {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .nexon-character-badge {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .compact-header {

@@ -1,15 +1,17 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
 const STORAGE_KEY = "yettttie-union-solver-v2";
+const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
+const NEXON_API_BASE = "https://open.api.nexon.com/maplestory/v1";
 
 const PIECES = [
   { id: "lv200_warrior", label: "Lv.200 전사", color: "#f25f5c", shape: [[2, 2], [2, 2]] },
-  { id: "lv200_bowman", label: "Lv.200 궁수", color: "#6fd08c", shape: [[1, 2, 2, 1]] },
-  { id: "lv200_thief", label: "Lv.200 도적", color: "#9a7cff", shape: [[1, 0, 0], [1, 2, 1]] },
+  { id: "lv200_bowman", label: "Lv.200 궁수 / Lv.120 메이플 M", color: "#6fd08c", shape: [[1, 2, 2, 1]] },
+  { id: "lv200_thief", label: "Lv.200 도적 / 제논", color: "#9a7cff", shape: [[1, 0, 0], [1, 2, 1]] },
   { id: "lv200_magician", label: "Lv.200 마법사", color: "#5ad1c3", shape: [[0, 1, 0], [1, 2, 1]] },
   { id: "lv200_pirate", label: "Lv.200 해적", color: "#ff8fab", shape: [[1, 2, 0], [0, 2, 1]] },
   { id: "lv250_warrior", label: "Lv.250 전사", color: "#ff924c", shape: [[1, 1, 2], [0, 1, 1]] },
-  { id: "lv250_bowman", label: "Lv.250 궁수", color: "#8bd450", shape: [[1, 1, 2, 1, 1]] },
+  { id: "lv250_bowman", label: "Lv.250 궁수 / Lv.250 메이플 M", color: "#8bd450", shape: [[1, 1, 2, 1, 1]] },
   { id: "lv250_thief", label: "Lv.250 도적", color: "#b38cff", shape: [[0, 0, 1], [1, 2, 1], [0, 0, 1]] },
   { id: "lv250_magician", label: "Lv.250 마법사", color: "#37c6c0", shape: [[0, 1, 0], [1, 2, 1], [0, 1, 0]] },
   { id: "lv250_pirate", label: "Lv.250 해적", color: "#ff6fa6", shape: [[1, 2, 0, 0], [0, 1, 1, 1]] },
@@ -26,6 +28,7 @@ const solutionMap = new Map();
 const regionGroups = buildRegionGroups();
 const regionMap = buildRegionMap();
 const borderMap = buildBorderMap();
+const CLASS_TYPE_MAP = buildClassTypeMap();
 
 let worker = null;
 let isPainting = false;
@@ -35,6 +38,13 @@ let regionClickEnabled = false;
 let liveSolveEnabled = false;
 let solverMode = "exact_cover";
 let hoveredRegion = -1;
+let nexonCandidates = [];
+let nexonSelectedIds = new Set();
+let nexonSelectionLimit = 0;
+let nexonHighestCharacter = null;
+let nexonUnionClassTypes = new Map();
+let nexonMapleMCount = 0;
+let nexonExcludedBelowLevelCount = 0;
 
 const boardGrid = document.getElementById("board-grid");
 const pieceList = document.getElementById("piece-list");
@@ -53,6 +63,20 @@ const solveButton = document.getElementById("solve-button");
 const stopButton = document.getElementById("stop-button");
 const clearButton = document.getElementById("clear-button");
 const clearPieceButton = document.getElementById("clear-piece-button");
+const nexonApiButton = document.getElementById("nexon-api-button");
+const nexonDialog = document.getElementById("nexon-dialog");
+const nexonDialogCloseButton = document.getElementById("nexon-dialog-close");
+const nexonDialogSummaryElement = document.getElementById("nexon-dialog-summary");
+const nexonApiKeyInput = document.getElementById("nexon-api-key-input");
+const nexonLoadButton = document.getElementById("nexon-load-button");
+const nexonTopCountInput = document.getElementById("nexon-top-count-input");
+const nexonTopSelectButton = document.getElementById("nexon-top-select-button");
+const nexonClearSelectionButton = document.getElementById("nexon-clear-selection-button");
+const nexonSelectionCountElement = document.getElementById("nexon-selection-count");
+const nexonStatusElement = document.getElementById("nexon-status");
+const nexonCharacterListElement = document.getElementById("nexon-character-list");
+const nexonCancelButton = document.getElementById("nexon-cancel-button");
+const nexonConfirmButton = document.getElementById("nexon-confirm-button");
 
 function init() {
   renderPieceInputs();
@@ -71,6 +95,14 @@ function bindEvents() {
   stopButton.addEventListener("click", stopSolve);
   clearButton.addEventListener("click", clearBoard);
   clearPieceButton.addEventListener("click", clearPieces);
+  nexonApiButton.addEventListener("click", openNexonDialog);
+  nexonDialogCloseButton.addEventListener("click", closeNexonDialog);
+  nexonCancelButton.addEventListener("click", closeNexonDialog);
+  nexonLoadButton.addEventListener("click", loadNexonCharacters);
+  nexonTopSelectButton.addEventListener("click", selectTopNexonCandidates);
+  nexonClearSelectionButton.addEventListener("click", clearNexonSelection);
+  nexonConfirmButton.addEventListener("click", applyNexonSelection);
+  nexonDialog.addEventListener("cancel", closeNexonDialog);
 
   regionClickInput.addEventListener("change", () => {
     regionClickEnabled = regionClickInput.checked;
@@ -156,10 +188,10 @@ function renderBoard() {
       cell.style.borderLeftWidth = `${leftWidth}px`;
       cell.style.borderRightWidth = `${rightWidth}px`;
       cell.style.borderBottomWidth = `${bottomWidth}px`;
-      cell.style.borderTopColor = topWidth > 1 ? "var(--region-line)" : "#c7d2df";
-      cell.style.borderLeftColor = leftWidth > 1 ? "var(--region-line)" : "#c7d2df";
-      cell.style.borderRightColor = rightWidth > 1 ? "var(--region-line)" : "#c7d2df";
-      cell.style.borderBottomColor = bottomWidth > 1 ? "var(--region-line)" : "#c7d2df";
+      cell.style.borderTopColor = topWidth > 1 ? "var(--region-line)" : "var(--board-cell-line)";
+      cell.style.borderLeftColor = leftWidth > 1 ? "var(--region-line)" : "var(--board-cell-line)";
+      cell.style.borderRightColor = rightWidth > 1 ? "var(--region-line)" : "var(--board-cell-line)";
+      cell.style.borderBottomColor = bottomWidth > 1 ? "var(--region-line)" : "var(--board-cell-line)";
       cell.dataset.region = String(regionMap[index]);
 
       cell.addEventListener("pointerdown", () => {
@@ -251,8 +283,10 @@ function paintBoard() {
 
     if (solutionMap.has(index)) {
       cell.classList.add("solution");
-      cell.style.backgroundColor = solutionMap.get(index);
+      cell.style.backgroundColor = solutionMap.get(index).color;
     }
+
+    paintCellBorders(cell, index);
   });
 }
 
@@ -272,6 +306,433 @@ function clearPieces() {
   clearSolution();
   updateStats();
   persistState();
+}
+
+function openNexonDialog() {
+  nexonApiKeyInput.value = localStorage.getItem(NEXON_API_KEY_STORAGE_KEY) || "";
+  setNexonStatus(nexonApiKeyInput.value ? "불러오기를 눌러 캐릭터 목록을 갱신하세요." : "API 키를 입력하세요.");
+  setNexonSummary("API 키를 입력하고 캐릭터 목록을 불러오세요.");
+  updateNexonSelectionCount();
+
+  if (typeof nexonDialog.showModal === "function") {
+    nexonDialog.showModal();
+  } else {
+    nexonDialog.setAttribute("open", "");
+  }
+
+  nexonApiKeyInput.focus();
+}
+
+function closeNexonDialog(event) {
+  if (event) {
+    event.preventDefault();
+  }
+  if (nexonDialog.open) {
+    nexonDialog.close();
+  } else {
+    nexonDialog.removeAttribute("open");
+  }
+}
+
+async function loadNexonCharacters() {
+  const apiKey = nexonApiKeyInput.value.trim();
+  if (!apiKey) {
+    setNexonStatus("API 키를 입력해야 합니다.", true);
+    nexonApiKeyInput.focus();
+    return;
+  }
+
+  setNexonLoading(true);
+  setNexonStatus("전체 캐릭터 목록을 불러오는 중입니다.");
+  nexonCharacterListElement.replaceChildren();
+
+  try {
+    localStorage.setItem(NEXON_API_KEY_STORAGE_KEY, apiKey);
+
+    const listData = await fetchNexonJson("/character/list", apiKey);
+    const characters = normalizeNexonCharacterList(listData);
+    if (!characters.length) {
+      throw new Error("캐릭터 목록이 비어 있습니다.");
+    }
+
+    nexonHighestCharacter = characters.reduce((highest, character) => (
+      character.level > highest.level ? character : highest
+    ), characters[0]);
+
+    setNexonStatus(`${nexonHighestCharacter.name} 기준 유니온 공격대 정보를 불러오는 중입니다.`);
+    const unionData = await fetchNexonJson(
+      `/user/union-raider?ocid=${encodeURIComponent(nexonHighestCharacter.ocid)}`,
+      apiKey,
+    );
+    const unionBlocks = getNexonUnionBlocks(unionData);
+    const eligibleCharacters = characters.filter((character) => character.level >= 200);
+
+    nexonMapleMCount = getNexonMapleMCount(unionBlocks);
+    nexonExcludedBelowLevelCount = characters.length - eligibleCharacters.length;
+    nexonSelectionLimit = unionBlocks.length || eligibleCharacters.length;
+    nexonUnionClassTypes = buildUnionClassTypes(unionBlocks);
+    nexonCandidates = buildNexonCandidates(eligibleCharacters, unionBlocks, nexonHighestCharacter);
+
+    const defaultCount = Math.min(nexonSelectionLimit, nexonCandidates.length);
+    nexonTopCountInput.max = String(nexonSelectionLimit);
+    nexonTopCountInput.value = String(defaultCount);
+    setNexonSelectedIds(getTopNexonCandidateIds(defaultCount));
+
+    renderNexonCharacters();
+    setNexonSummary(
+      `${nexonHighestCharacter.world} ${nexonHighestCharacter.name} Lv.${nexonHighestCharacter.level} 기준, ` +
+      `공격대 ${formatNexonRaidLimit()}까지 선택할 수 있습니다.`,
+    );
+    setNexonStatus(getNexonLoadedStatus());
+  } catch (error) {
+    setNexonStatus(error.message || "NEXON OPEN API 호출에 실패했습니다.", true);
+  } finally {
+    setNexonLoading(false);
+  }
+}
+
+async function fetchNexonJson(path, apiKey) {
+  const response = await fetch(`${NEXON_API_BASE}${path}`, {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      "x-nxopen-api-key": apiKey,
+    },
+  });
+
+  if (!response.ok) {
+    let message = `NEXON OPEN API 오류 (${response.status})`;
+    try {
+      const errorBody = await response.json();
+      message = errorBody.message || errorBody.error_description || message;
+    } catch (_error) {
+      // Keep the generic HTTP message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+function normalizeNexonCharacterList(data) {
+  const accounts = Array.isArray(data?.account_list) ? data.account_list : [];
+  const characters = [];
+
+  accounts.forEach((account) => {
+    const characterList = Array.isArray(account.character_list) ? account.character_list : [];
+    characterList.forEach((character) => {
+      characters.push({
+        id: character.ocid,
+        ocid: character.ocid,
+        name: character.character_name || "",
+        world: character.world_name || "",
+        className: character.character_class || "",
+        level: Number(character.character_level || 0),
+        accountId: account.account_id || "",
+        isMapleM: false,
+      });
+    });
+  });
+
+  return characters.filter((character) => character.ocid && character.name);
+}
+
+function getNexonUnionBlocks(data) {
+  if (Array.isArray(data?.union_block)) {
+    return data.union_block;
+  }
+
+  const preset = Object.keys(data || {})
+    .filter((key) => key.startsWith("union_raider_preset_"))
+    .map((key) => data[key])
+    .find((value) => Array.isArray(value?.union_block) && value.union_block.length);
+
+  return preset?.union_block || [];
+}
+
+function getNexonMapleMCount(unionBlocks) {
+  return unionBlocks.filter((block) => block.block_type === "메이플 M 캐릭터").length;
+}
+
+function buildUnionClassTypes(unionBlocks) {
+  const classTypes = new Map();
+  unionBlocks.forEach((block) => {
+    if (block.block_class && block.block_type) {
+      classTypes.set(block.block_class, block.block_type);
+    }
+  });
+  return classTypes;
+}
+
+function buildNexonCandidates(characters, unionBlocks, highestCharacter) {
+  const mapleMCharacters = unionBlocks
+    .filter((block) => block.block_type === "메이플 M 캐릭터")
+    .map((block, index) => ({
+      id: `maple-m-${index}`,
+      ocid: `maple-m-${index}`,
+      name: "메이플 M 캐릭터",
+      world: highestCharacter.world,
+      className: block.block_class || "모바일 캐릭터",
+      level: Number(block.block_level || 0),
+      blockType: "궁수",
+      blockLevel: Number(block.block_level || 0),
+      isMapleM: true,
+    }));
+
+  const sortedCharacters = [...characters].sort((left, right) => {
+    const leftSameWorld = left.world === highestCharacter.world ? 1 : 0;
+    const rightSameWorld = right.world === highestCharacter.world ? 1 : 0;
+    if (leftSameWorld !== rightSameWorld) {
+      return rightSameWorld - leftSameWorld;
+    }
+    if (left.level !== right.level) {
+      return right.level - left.level;
+    }
+    return left.name.localeCompare(right.name, "ko-KR");
+  });
+
+  return [...mapleMCharacters, ...sortedCharacters];
+}
+
+function selectTopNexonCandidates() {
+  const count = clampNexonSelectionCount(Number(nexonTopCountInput.value || 0));
+  nexonTopCountInput.value = String(count);
+  setNexonSelectedIds(getTopNexonCandidateIds(count));
+  renderNexonCharacters();
+  setNexonStatus(`상위 ${count}명을 선택했습니다.`);
+}
+
+function clearNexonSelection() {
+  nexonSelectedIds.clear();
+  renderNexonCharacters();
+  setNexonStatus("선택을 전부 해제했습니다.");
+}
+
+function clampNexonSelectionCount(value) {
+  const max = Math.min(nexonSelectionLimit, nexonCandidates.length);
+  return Math.max(0, Math.min(max, Math.floor(Number.isFinite(value) ? value : 0)));
+}
+
+function getTopNexonCandidateIds(count) {
+  return new Set(nexonCandidates.slice(0, clampNexonSelectionCount(count)).map((candidate) => candidate.id));
+}
+
+function setNexonSelectedIds(ids) {
+  nexonSelectedIds = ids;
+  updateNexonSelectionCount();
+}
+
+function renderNexonCharacters() {
+  nexonCharacterListElement.replaceChildren();
+
+  if (!nexonCandidates.length) {
+    const empty = document.createElement("p");
+    empty.className = "nexon-empty";
+    empty.textContent = "불러온 캐릭터가 없습니다.";
+    nexonCharacterListElement.append(empty);
+    updateNexonSelectionCount();
+    return;
+  }
+
+  nexonCandidates.forEach((candidate) => {
+    const row = document.createElement("label");
+    row.className = "nexon-character-row";
+    row.classList.toggle("selected", nexonSelectedIds.has(candidate.id));
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = nexonSelectedIds.has(candidate.id);
+    input.addEventListener("change", () => {
+      updateNexonCandidateSelection(candidate, input.checked);
+      renderNexonCharacters();
+    });
+
+    const main = document.createElement("span");
+    main.className = "nexon-character-main";
+
+    const name = document.createElement("strong");
+    name.textContent = candidate.name;
+
+    const detail = document.createElement("span");
+    detail.textContent = `${candidate.world} · Lv.${candidate.level || "-"} · ${candidate.className}`;
+
+    main.append(name, detail);
+
+    const badge = document.createElement("span");
+    badge.className = "nexon-character-badge";
+    badge.textContent = getPieceLabelForCandidate(candidate);
+
+    row.append(input, main, renderNexonPiecePreview(candidate), badge);
+    nexonCharacterListElement.append(row);
+  });
+
+  updateNexonSelectionCount();
+}
+
+function updateNexonCandidateSelection(candidate, selected) {
+  if (selected) {
+    if (nexonSelectedIds.size >= nexonSelectionLimit) {
+      setNexonStatus(`최대 ${formatNexonRaidLimit()}까지 선택할 수 있습니다.`, true);
+      return;
+    }
+    nexonSelectedIds.add(candidate.id);
+  } else {
+    nexonSelectedIds.delete(candidate.id);
+  }
+
+  setNexonStatus("선택을 변경했습니다.");
+  updateNexonSelectionCount();
+}
+
+function applyNexonSelection() {
+  const selectedCandidates = nexonCandidates.filter((candidate) => nexonSelectedIds.has(candidate.id));
+  if (!selectedCandidates.length) {
+    setNexonStatus("반영할 캐릭터를 선택하세요.", true);
+    return;
+  }
+
+  const counts = {};
+  PIECES.forEach((piece) => {
+    counts[piece.id] = 0;
+  });
+
+  const skipped = [];
+  selectedCandidates.forEach((candidate) => {
+    const pieceId = getPieceIdForCandidate(candidate);
+    if (!pieceId || !pieceInputs.has(pieceId)) {
+      skipped.push(candidate.name);
+      return;
+    }
+    counts[pieceId] += 1;
+  });
+
+  Object.entries(counts).forEach(([pieceId, count]) => {
+    pieceInputs.get(pieceId).value = String(count);
+  });
+
+  clearSolution();
+  updateStats();
+  persistState();
+  setBoardCaption(`NEXON OPEN API 선택 ${selectedCandidates.length - skipped.length}명을 유니온 대원 수에 반영했습니다.`);
+
+  if (skipped.length) {
+    setNexonStatus(`지원되지 않는 직업 ${skipped.length}명은 제외했습니다.`, true);
+    return;
+  }
+
+  closeNexonDialog();
+}
+
+function getPieceIdForCandidate(candidate) {
+  if (candidate.isMapleM) {
+    return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250_bowman" : "lv200_bowman";
+  }
+
+  const blockType = candidate.blockType || nexonUnionClassTypes.get(candidate.className) || CLASS_TYPE_MAP.get(candidate.className);
+  if (blockType === "하이브리드" || candidate.className === "제논") {
+    return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250_xenon" : "lv200_thief";
+  }
+
+  const pieceType = {
+    전사: "warrior",
+    궁수: "bowman",
+    도적: "thief",
+    마법사: "magician",
+    해적: "pirate",
+  }[blockType];
+
+  if (!pieceType) {
+    return "";
+  }
+
+  const tier = Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250" : "lv200";
+  return `${tier}_${pieceType}`;
+}
+
+function getPieceLabelForCandidate(candidate) {
+  if (candidate.isMapleM) {
+    return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "Lv.250 메이플 M" : "Lv.120 메이플 M";
+  }
+
+  if (candidate.className === "제논" && Number(candidate.blockLevel || candidate.level || 0) < 250) {
+    return "Lv.200 제논";
+  }
+
+  const piece = PIECES.find((item) => item.id === getPieceIdForCandidate(candidate));
+  return piece ? piece.label.split(" / ")[0] : "미지원";
+}
+
+function renderNexonPiecePreview(candidate) {
+  const piece = PIECES.find((item) => item.id === getPieceIdForCandidate(candidate));
+  const preview = document.createElement("span");
+  preview.className = "nexon-piece-preview";
+
+  if (!piece) {
+    preview.classList.add("empty");
+    preview.setAttribute("aria-label", "지원되지 않는 블럭");
+    return preview;
+  }
+
+  preview.style.gridTemplateColumns = `repeat(${piece.shape[0].length}, 8px)`;
+  preview.style.gridTemplateRows = `repeat(${piece.shape.length}, 8px)`;
+  preview.style.setProperty("--piece-color", piece.color);
+  preview.setAttribute("aria-label", `${piece.label} 블럭 모양`);
+
+  for (let y = 0; y < piece.shape.length; y += 1) {
+    for (let x = 0; x < piece.shape[y].length; x += 1) {
+      const dot = document.createElement("span");
+      dot.className = "nexon-piece-preview-cell";
+      if (piece.shape[y][x] > 0) {
+        dot.classList.add("active");
+      }
+      preview.append(dot);
+    }
+  }
+
+  return preview;
+}
+
+function setNexonLoading(loading) {
+  nexonLoadButton.disabled = loading;
+  nexonConfirmButton.disabled = loading;
+  nexonTopSelectButton.disabled = loading || !nexonCandidates.length;
+  nexonClearSelectionButton.disabled = loading || !nexonCandidates.length;
+}
+
+function setNexonSummary(text) {
+  nexonDialogSummaryElement.textContent = text;
+}
+
+function setNexonStatus(text, isError = false) {
+  nexonStatusElement.textContent = text;
+  nexonStatusElement.classList.toggle("error", isError);
+}
+
+function updateNexonSelectionCount() {
+  nexonSelectionCountElement.textContent = `${nexonSelectedIds.size} / ${formatNexonRaidLimit()}`;
+  nexonTopSelectButton.textContent = `상위 ${formatNexonRaidLimit()} 선택`;
+  nexonTopSelectButton.disabled = !nexonCandidates.length;
+  nexonClearSelectionButton.disabled = !nexonCandidates.length;
+}
+
+function formatNexonRaidLimit() {
+  if (nexonMapleMCount > 0 && nexonSelectionLimit > nexonMapleMCount) {
+    return `${nexonSelectionLimit - nexonMapleMCount} + ${nexonMapleMCount}명`;
+  }
+
+  return `${nexonSelectionLimit}명`;
+}
+
+function getNexonLoadedStatus() {
+  if (nexonExcludedBelowLevelCount > 0) {
+    return (
+      `캐릭터 목록을 불러왔습니다. ` +
+      `200레벨 미만 캐릭터 ${nexonExcludedBelowLevelCount}명은 유니온 블럭을 지원하지 않아 제외했습니다. ` +
+      `해당 캐릭터는 인게임 자동 배치 시스템을 사용해 주세요.`
+    );
+  }
+
+  return "캐릭터 목록을 불러왔습니다.";
 }
 
 function getPieceCounts() {
@@ -409,14 +870,18 @@ function handleWorkerMessage(event) {
 function applySolution(placements) {
   solutionMap.clear();
 
-  placements.forEach((placement) => {
+  placements.forEach((placement, placementIndex) => {
     const piece = PIECES.find((item) => item.id === placement.pieceId);
     if (!piece) {
       return;
     }
 
+    const placementId = `${placement.pieceId}:${placementIndex}`;
     placement.cells.forEach((index) => {
-      solutionMap.set(index, piece.color);
+      solutionMap.set(index, {
+        color: piece.color,
+        placementId,
+      });
     });
   });
 
@@ -511,6 +976,110 @@ function normalizeSolverMode(value) {
     : "exact_cover";
 }
 
+function buildClassTypeMap() {
+  const map = new Map();
+  const add = (type, classNames) => {
+    classNames.forEach((className) => {
+      map.set(className, type);
+    });
+  };
+
+  add("전사", [
+    "검사",
+    "파이터",
+    "크루세이더",
+    "히어로",
+    "페이지",
+    "나이트",
+    "팔라딘",
+    "스피어맨",
+    "버서커",
+    "다크나이트",
+    "소울마스터",
+    "미하일",
+    "블래스터",
+    "데몬슬레이어",
+    "데몬어벤져",
+    "아란",
+    "카이저",
+    "아델",
+    "제로",
+    "렌",
+  ]);
+  add("궁수", [
+    "아처",
+    "헌터",
+    "레인저",
+    "보우마스터",
+    "석궁사수",
+    "저격수",
+    "신궁",
+    "패스파인더",
+    "윈드브레이커",
+    "와일드헌터",
+    "메르세데스",
+    "카인",
+  ]);
+  add("마법사", [
+    "매지션",
+    "위자드(불,독)",
+    "메이지(불,독)",
+    "아크메이지(불,독)",
+    "위자드(썬,콜)",
+    "메이지(썬,콜)",
+    "아크메이지(썬,콜)",
+    "클레릭",
+    "프리스트",
+    "비숍",
+    "플레임위자드",
+    "배틀메이지",
+    "에반",
+    "루미너스",
+    "일리움",
+    "라라",
+    "키네시스",
+  ]);
+  add("도적", [
+    "로그",
+    "어쌔신",
+    "허밋",
+    "나이트로드",
+    "시프",
+    "시프마스터",
+    "섀도어",
+    "세미듀어러",
+    "듀어러",
+    "듀얼마스터",
+    "슬래셔",
+    "듀얼블레이더",
+    "나이트워커",
+    "팬텀",
+    "카데나",
+    "칼리",
+    "호영",
+  ]);
+  add("해적", [
+    "해적",
+    "인파이터",
+    "버커니어",
+    "바이퍼",
+    "건슬링거",
+    "발키리",
+    "캡틴",
+    "캐논슈터",
+    "캐논블래스터",
+    "캐논마스터",
+    "스트라이커",
+    "메카닉",
+    "은월",
+    "엔젤릭버스터",
+    "아크",
+  ]);
+  add("하이브리드", ["제논"]);
+
+  return map;
+}
+
 function setStatus(text) {
   solverStatusElement.textContent = text;
 }
@@ -535,6 +1104,71 @@ function getCellsFromShape(shape) {
   }
 
   return cells;
+}
+
+function paintCellBorders(cell, index) {
+  const row = Math.floor(index / BOARD_WIDTH);
+  const col = index % BOARD_WIDTH;
+  const borders = borderMap[index];
+  const topWidth = getRenderedTopBorder(row, col, borders);
+  const leftWidth = getRenderedLeftBorder(row, col, borders);
+  const rightWidth = col === BOARD_WIDTH - 1 ? borders.right : 0;
+  const bottomWidth = row === BOARD_HEIGHT - 1 ? borders.bottom : 0;
+  const topStyle = getSolutionEdgeStyle(index, row > 0 ? toIndex(row - 1, col) : -1, topWidth);
+  const leftStyle = getSolutionEdgeStyle(index, col > 0 ? toIndex(row, col - 1) : -1, leftWidth);
+  const rightStyle = getSolutionEdgeStyle(index, -1, rightWidth);
+  const bottomStyle = getSolutionEdgeStyle(index, -1, bottomWidth);
+
+  cell.style.borderTopWidth = `${topStyle.width}px`;
+  cell.style.borderLeftWidth = `${leftStyle.width}px`;
+  cell.style.borderRightWidth = `${rightStyle.width}px`;
+  cell.style.borderBottomWidth = `${bottomStyle.width}px`;
+  cell.style.borderTopColor = topStyle.color;
+  cell.style.borderLeftColor = leftStyle.color;
+  cell.style.borderRightColor = rightStyle.color;
+  cell.style.borderBottomColor = bottomStyle.color;
+}
+
+function getSolutionEdgeStyle(index, neighborIndex, baseWidth) {
+  if (baseWidth === 0) {
+    return {
+      width: 0,
+      color: "transparent",
+    };
+  }
+
+  const current = solutionMap.get(index);
+  const neighbor = neighborIndex >= 0 ? solutionMap.get(neighborIndex) : null;
+
+  if (!current && !neighbor) {
+    return getBaseEdgeStyle(baseWidth);
+  }
+
+  if (baseWidth > 1) {
+    return {
+      width: baseWidth,
+      color: "var(--region-line)",
+    };
+  }
+
+  if (current && neighbor && current.placementId === neighbor.placementId) {
+    return {
+      width: 0,
+      color: "transparent",
+    };
+  }
+
+  return {
+    width: 2,
+    color: "var(--solution-piece-line)",
+  };
+}
+
+function getBaseEdgeStyle(baseWidth) {
+  return {
+    width: baseWidth,
+    color: baseWidth > 1 ? "var(--region-line)" : "var(--board-cell-line)",
+  };
 }
 
 function buildRegionGroups() {
