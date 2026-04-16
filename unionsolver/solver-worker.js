@@ -1,18 +1,22 @@
 const PIECE_SHAPES = [
-  { pieceId: "lv200_warrior" },
-  { pieceId: "lv200_bowman" },
-  { pieceId: "lv200_thief" },
-  { pieceId: "lv200_magician" },
-  { pieceId: "lv200_pirate" },
-  { pieceId: "lv250_warrior" },
-  { pieceId: "lv250_bowman" },
-  { pieceId: "lv250_thief" },
-  { pieceId: "lv250_magician" },
-  { pieceId: "lv250_pirate" },
-  { pieceId: "lv250_xenon" },
-];
+  { pieceId: "lv200_warrior", shape: [[2, 1], [1, 1]] },
+  { pieceId: "lv200_bowman", shape: [[1, 2, 1, 1]] },
+  { pieceId: "lv200_thief", shape: [[1, 0, 0], [1, 2, 1]] },
+  { pieceId: "lv200_magician", shape: [[0, 1, 0], [1, 2, 1]] },
+  { pieceId: "lv200_pirate", shape: [[1, 2, 0], [0, 1, 1]] },
+  { pieceId: "lv250_warrior", shape: [[1, 1, 2], [0, 1, 1]] },
+  { pieceId: "lv250_bowman", shape: [[1, 1, 2, 1, 1]] },
+  { pieceId: "lv250_thief", shape: [[0, 0, 1], [1, 2, 1], [0, 0, 1]] },
+  { pieceId: "lv250_magician", shape: [[0, 1, 0], [1, 2, 1], [0, 1, 0]] },
+  { pieceId: "lv250_pirate", shape: [[1, 2, 0, 0], [0, 1, 1, 1]] },
+  { pieceId: "lv250_xenon", shape: [[1, 1, 0], [0, 2, 0], [0, 1, 1]] },
+].map((piece) => ({
+  ...piece,
+  cells: getCellsFromShape(piece.shape),
+  controlCells: getCellsFromShape(piece.shape, 2),
+}));
 
-const ASSET_VERSION = "20260416-branch-stop-2";
+const ASSET_VERSION = "20260417-exact-cell-match-1";
 
 let cancelled = false;
 let wasmExportsPromise = null;
@@ -32,6 +36,43 @@ self.addEventListener("message", (event) => {
 });
 
 async function solveRequest(data) {
+  const totalPieceCells = PIECE_SHAPES.reduce((sum, piece) => (
+    sum + piece.cells.length * Math.max(0, Math.floor(Number(data.pieceCounts[piece.pieceId] || 0)))
+  ), 0);
+
+  if (!Array.isArray(data.target) || data.target.length !== totalPieceCells) {
+    finish({
+      status: "unsolved",
+      message: `목표 칸 ${Array.isArray(data.target) ? data.target.length : 0}칸과 조각 칸 ${totalPieceCells}칸이 같아야 합니다.`,
+      placements: [],
+      startTime: Date.now(),
+      iterations: 0,
+      engineLabel: "WASM",
+    });
+    return;
+  }
+
+  if (data.requireCenterControl) {
+    const centeredResult = await solveWithCenterControl(data);
+    if (centeredResult?.result) {
+      finish({
+        ...centeredResult.result,
+        engineLabel: "WASM",
+      });
+      return;
+    }
+
+    finish({
+      status: "unsolved",
+      message: "중앙 4칸 기준점 조건 탐색을 실행하지 못했습니다.",
+      placements: [],
+      startTime: Date.now(),
+      iterations: 0,
+      engineLabel: "WASM",
+    });
+    return;
+  }
+
   if (shouldUseWasmLiveSolver(data)) {
     const liveWasmResult = await solveWithWasmLive(data);
     if (liveWasmResult?.result) {
@@ -81,6 +122,278 @@ function isSupportedWasmMode(mode) {
     || mode === "branch_and_bound";
 }
 
+async function solveWithCenterControl(data) {
+  if (!isSupportedWasmMode(data.solverMode) || cancelled) {
+    return null;
+  }
+
+  const startTime = Date.now();
+  const candidates = getCenterControlCandidates(data);
+  if (!candidates.length) {
+    return {
+      result: {
+        status: "unsolved",
+        message: "중앙 4칸에 기준점을 둘 수 있는 블럭이 없습니다.",
+        placements: [],
+        startTime,
+        iterations: 0,
+      },
+    };
+  }
+
+  postProgress({
+    statusMessage: "중앙 기준점 조건 탐색 중",
+    startTime,
+    iterations: 0,
+  });
+
+  let totalIterations = 0;
+  let timedOut = false;
+  const timeoutMs = Math.max(1, Math.floor(Number(data.timeoutMs || 0)));
+
+  for (const candidate of candidates) {
+    if (cancelled) {
+      return {
+        result: {
+          status: "cancelled",
+          message: "중지됨",
+          placements: [],
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = timeoutMs - elapsedMs;
+    if (remainingMs <= 0) {
+      timedOut = true;
+      break;
+    }
+
+    const fixedCells = new Set(candidate.cells);
+    const pieceCounts = { ...data.pieceCounts };
+    pieceCounts[candidate.pieceId] = Math.max(0, Number(pieceCounts[candidate.pieceId] || 0) - 1);
+    const target = data.target.filter((cell) => !fixedCells.has(cell));
+    if (data.liveSolve) {
+      postProgress({
+        statusMessage: "중앙 기준점 후보 탐색 중",
+        startTime,
+        iterations: totalIterations,
+        placements: [candidate],
+      });
+    }
+
+    if (target.length === 0 && isValidCombinedPlacement([candidate], data.target, data.width, data.height)) {
+      return {
+        result: {
+          status: "ok",
+          placements: [candidate],
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    const innerRequest = {
+      ...data,
+      target,
+      pieceCounts,
+      timeoutMs: remainingMs,
+      fixedPlacements: [candidate],
+      iterationOffset: totalIterations,
+      startTimeOverride: startTime,
+      requireCenterControl: false,
+    };
+    const wasmResult = data.liveSolve
+      ? await solveWithWasmLive({
+        ...innerRequest,
+        liveSolve: true,
+      })
+      : await solveWithWasm({
+        ...innerRequest,
+        liveSolve: false,
+      });
+
+    const result = wasmResult?.result;
+    totalIterations += result?.iterations || 0;
+
+    if (!result) {
+      return null;
+    }
+
+    if (result.status === "timeout") {
+      timedOut = true;
+      break;
+    }
+
+    if (result.status === "cancelled") {
+      return {
+        result: {
+          ...result,
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    if (result.status !== "ok") {
+      continue;
+    }
+
+    const placements = [candidate, ...result.placements];
+    if (!isValidCombinedPlacement(placements, data.target, data.width, data.height)) {
+      continue;
+    }
+
+    return {
+      result: {
+        status: "ok",
+        placements,
+        startTime,
+        iterations: totalIterations,
+      },
+    };
+  }
+
+  return {
+    result: {
+      status: timedOut ? "timeout" : "unsolved",
+      message: timedOut ? "타임아웃" : "중앙 4칸 기준점 조건을 만족하는 배치를 찾지 못했습니다.",
+      placements: [],
+      startTime,
+      iterations: totalIterations,
+    },
+  };
+}
+
+function getCenterControlCandidates(data) {
+  const centerIndexes = getCenterIndexes(data.width, data.height);
+  const candidates = [];
+  const seen = new Set();
+
+  PIECE_SHAPES.forEach((piece, pieceIndex) => {
+    if (Math.max(0, Math.floor(Number(data.pieceCounts[piece.pieceId] || 0))) <= 0) {
+      return;
+    }
+
+    centerIndexes.forEach((centerIndex) => {
+      const centerPoint = indexToPoint(centerIndex, data.width);
+      getTransformedPieceVariants(piece).forEach((variant) => {
+        const cells = variant.cells.map(([x, y]) => [
+          centerPoint[0] + x - variant.control[0],
+          centerPoint[1] + y - variant.control[1],
+        ]);
+
+        if (!cells.every(([x, y]) => x >= 0 && x < data.width && y >= 0 && y < data.height)) {
+          return;
+        }
+
+        const indexes = cells.map(([x, y]) => toIndex(y, x, data.width)).sort((left, right) => left - right);
+        const key = `${piece.pieceId}:${indexes.join(",")}`;
+        if (seen.has(key)) {
+          return;
+        }
+
+        seen.add(key);
+        candidates.push({
+          pieceId: piece.pieceId,
+          pieceIndex,
+          cells: indexes,
+          centerIndex,
+        });
+      });
+    });
+  });
+
+  return candidates.sort((left, right) => {
+    const leftSize = PIECE_SHAPES[left.pieceIndex].cells.length;
+    const rightSize = PIECE_SHAPES[right.pieceIndex].cells.length;
+    return rightSize - leftSize || left.pieceIndex - right.pieceIndex || left.centerIndex - right.centerIndex;
+  });
+}
+
+function getCenterIndexes(width, height) {
+  const left = Math.floor(width / 2) - 1;
+  const right = Math.floor(width / 2);
+  const top = Math.floor(height / 2) - 1;
+  const bottom = Math.floor(height / 2);
+  return [
+    toIndex(top, left, width),
+    toIndex(top, right, width),
+    toIndex(bottom, left, width),
+    toIndex(bottom, right, width),
+  ];
+}
+
+function getTransformedPieceVariants(piece) {
+  const variants = [];
+  const seen = new Set();
+  const controlCells = piece.controlCells.length ? piece.controlCells : piece.cells;
+
+  controlCells.forEach((controlCell) => {
+    [-1, 1].forEach((flipX) => {
+      for (let rotation = 0; rotation < 4; rotation += 1) {
+        const cells = piece.cells.map((cell) => transformPoint(cell, flipX, rotation));
+        const control = transformPoint(controlCell, flipX, rotation);
+        const key = `${normalizeCells(cells)}:${control.join(",")}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        variants.push({ cells, control });
+      }
+    });
+  });
+
+  return variants;
+}
+
+function transformPoint(point, flipX, rotation) {
+  let x = point[0] * flipX;
+  let y = point[1];
+
+  for (let index = 0; index < rotation; index += 1) {
+    [x, y] = [-y, x];
+  }
+
+  return [x, y];
+}
+
+function normalizeCells(cells) {
+  return cells
+    .map(([x, y]) => [Number(x), Number(y)])
+    .sort((left, right) => left[1] - right[1] || left[0] - right[0])
+    .map(([x, y]) => `${x},${y}`)
+    .join(" ");
+}
+
+function isValidCombinedPlacement(placements, target, width, height) {
+  const occupied = new Set();
+  const targetSet = new Set(target);
+  const coveredTarget = new Set();
+
+  for (const placement of placements) {
+    if (!placement || !Array.isArray(placement.cells)) {
+      return false;
+    }
+
+    for (const cell of placement.cells) {
+      const [x, y] = indexToPoint(cell, width);
+      if (x < 0 || x >= width || y < 0 || y >= height || occupied.has(cell)) {
+        return false;
+      }
+
+      occupied.add(cell);
+      if (targetSet.has(cell)) {
+        coveredTarget.add(cell);
+      }
+    }
+  }
+
+  return coveredTarget.size === targetSet.size;
+}
+
 async function solveWithWasmLive(data) {
   if (!shouldUseWasmLiveSolver(data) || cancelled) {
     return null;
@@ -91,7 +404,8 @@ async function solveWithWasmLive(data) {
     return null;
   }
 
-  const startTime = Date.now();
+  const startTime = data.startTimeOverride || Date.now();
+  const iterationOffset = Math.max(0, Math.floor(Number(data.iterationOffset || 0)));
   const liveBatchSize = getLiveBatchSize(data.solverMode);
   let lastProgressAt = startTime;
   let lastProgressIterations = 0;
@@ -99,7 +413,8 @@ async function solveWithWasmLive(data) {
   postProgress({
     statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
     startTime,
-    iterations: 0,
+    iterations: iterationOffset,
+    placements: getProgressPlacements(data, []),
   });
 
   try {
@@ -128,8 +443,8 @@ async function solveWithWasmLive(data) {
         postProgress({
           statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
           startTime,
-          iterations: result.iterations,
-          placements: data.liveSolve ? result.placements : undefined,
+          iterations: iterationOffset + result.iterations,
+          placements: data.liveSolve ? getProgressPlacements(data, result.placements) : undefined,
         });
         lastProgressAt = now;
         lastProgressIterations = result.iterations;
@@ -143,7 +458,7 @@ async function solveWithWasmLive(data) {
           result: {
             status: "cancelled",
             message: "중지됨",
-            placements: result.placements,
+            placements: getProgressPlacements(data, result.placements),
             startTime,
             iterations: result.iterations,
           },
@@ -420,6 +735,34 @@ function placementsExactlyCoverTarget(placements, target) {
   }
 
   return covered.size === targetSet.size;
+}
+
+function getCellsFromShape(shape, targetValue = null) {
+  const cells = [];
+
+  for (let y = 0; y < shape.length; y += 1) {
+    for (let x = 0; x < shape[y].length; x += 1) {
+      const value = shape[y][x];
+      if (targetValue === null ? value > 0 : value === targetValue) {
+        cells.push([x, y]);
+      }
+    }
+  }
+
+  return cells;
+}
+
+function toIndex(row, col, width) {
+  return row * width + col;
+}
+
+function indexToPoint(index, width) {
+  return [index % width, Math.floor(index / width)];
+}
+
+function getProgressPlacements(data, placements = []) {
+  const fixedPlacements = Array.isArray(data.fixedPlacements) ? data.fixedPlacements : [];
+  return [...fixedPlacements, ...placements];
 }
 
 function postProgress({ statusMessage, startTime, iterations, placements }) {

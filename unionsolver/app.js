@@ -1,16 +1,16 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
-const ASSET_VERSION = "20260416-branch-stop-2";
+const ASSET_VERSION = "20260417-exact-cell-match-1";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
 const NEXON_API_BASE = "https://open.api.nexon.com/maplestory/v1";
 
 const PIECES = [
-  { id: "lv200_warrior", label: "Lv.200 전사", color: "#f25f5c", shape: [[2, 2], [2, 2]] },
-  { id: "lv200_bowman", label: "Lv.200 궁수 / Lv.120 메이플 M", color: "#6fd08c", shape: [[1, 2, 2, 1]] },
+  { id: "lv200_warrior", label: "Lv.200 전사", color: "#f25f5c", shape: [[2, 1], [1, 1]] },
+  { id: "lv200_bowman", label: "Lv.200 궁수 / Lv.120 메이플 M", color: "#6fd08c", shape: [[1, 2, 1, 1]] },
   { id: "lv200_thief", label: "Lv.200 도적 / 제논", color: "#9a7cff", shape: [[1, 0, 0], [1, 2, 1]] },
   { id: "lv200_magician", label: "Lv.200 마법사", color: "#5ad1c3", shape: [[0, 1, 0], [1, 2, 1]] },
-  { id: "lv200_pirate", label: "Lv.200 해적", color: "#ff8fab", shape: [[1, 2, 0], [0, 2, 1]] },
+  { id: "lv200_pirate", label: "Lv.200 해적", color: "#ff8fab", shape: [[1, 2, 0], [0, 1, 1]] },
   { id: "lv250_warrior", label: "Lv.250 전사", color: "#ff924c", shape: [[1, 1, 2], [0, 1, 1]] },
   { id: "lv250_bowman", label: "Lv.250 궁수 / Lv.250 메이플 M", color: "#8bd450", shape: [[1, 1, 2, 1, 1]] },
   { id: "lv250_thief", label: "Lv.250 도적", color: "#b38cff", shape: [[0, 0, 1], [1, 2, 1], [0, 0, 1]] },
@@ -20,7 +20,24 @@ const PIECES = [
 ].map((piece) => ({
   ...piece,
   cells: getCellsFromShape(piece.shape),
+  controlCells: getCellsFromShape(piece.shape, 2),
 }));
+
+const JOB_ICON_BY_PIECE_ID = {
+  lv200_warrior: "./jobicon/warrior.png",
+  lv250_warrior: "./jobicon/warrior.png",
+  lv200_bowman: "./jobicon/bowman.png",
+  lv250_bowman: "./jobicon/bowman.png",
+  lv200_thief: "./jobicon/thief.png",
+  lv250_thief: "./jobicon/thief.png",
+  lv200_magician: "./jobicon/magician.png",
+  lv250_magician: "./jobicon/magician.png",
+  lv200_pirate: "./jobicon/pirate.png",
+  lv250_pirate: "./jobicon/pirate.png",
+  lv250_xenon: "./jobicon/xenon.png",
+  beginner: "./jobicon/beginner.png",
+  common: "./jobicon/common.png",
+};
 
 const boardState = new Array(BOARD_WIDTH * BOARD_HEIGHT).fill(false);
 const boardCells = [];
@@ -30,6 +47,7 @@ const regionGroups = buildRegionGroups();
 const regionMap = buildRegionMap();
 const borderMap = buildBorderMap();
 const CLASS_TYPE_MAP = buildClassTypeMap();
+const transformedControlShapeCache = new Map();
 
 let worker = null;
 let isPainting = false;
@@ -46,6 +64,7 @@ let nexonHighestCharacter = null;
 let nexonUnionClassTypes = new Map();
 let nexonMapleMCount = 0;
 let nexonExcludedBelowLevelCount = 0;
+let pieceControlIconQueues = new Map();
 
 const boardGrid = document.getElementById("board-grid");
 const pieceList = document.getElementById("piece-list");
@@ -141,6 +160,9 @@ function renderPieceInputs() {
         if (piece.shape[y][x] > 0) {
           dot.classList.add("active");
         }
+        if (piece.shape[y][x] === 2) {
+          dot.classList.add("control");
+        }
         preview.appendChild(dot);
       }
     }
@@ -160,6 +182,7 @@ function renderPieceInputs() {
     input.step = "1";
     input.value = "0";
     input.addEventListener("input", () => {
+      pieceControlIconQueues.clear();
       clearSolution();
       updateStats();
       persistState();
@@ -280,11 +303,20 @@ function paintBoard() {
     cell.classList.toggle("target", boardState[index]);
     cell.classList.toggle("region-hover", hoverActive);
     cell.classList.remove("solution");
+    cell.classList.remove("solution-control");
+    cell.removeAttribute("title");
+    cell.style.removeProperty("--control-icon");
     cell.style.backgroundColor = boardState[index] ? "" : hoverActive ? "#d7dee8" : "#f2f5f8";
 
     if (solutionMap.has(index)) {
+      const solution = solutionMap.get(index);
       cell.classList.add("solution");
-      cell.style.backgroundColor = solutionMap.get(index).color;
+      cell.classList.toggle("solution-control", Boolean(solution.isControl));
+      if (solution.isControl) {
+        cell.title = "블럭 기준점";
+        cell.style.setProperty("--control-icon", `url("${solution.controlIcon}")`);
+      }
+      cell.style.backgroundColor = solution.color;
     }
 
     paintCellBorders(cell, index);
@@ -300,6 +332,7 @@ function clearBoard() {
 }
 
 function clearPieces() {
+  pieceControlIconQueues.clear();
   pieceInputs.forEach((input) => {
     input.value = "0";
   });
@@ -372,7 +405,12 @@ async function loadNexonCharacters() {
     nexonExcludedBelowLevelCount = characters.length - eligibleCharacters.length;
     nexonSelectionLimit = unionBlocks.length || eligibleCharacters.length;
     nexonUnionClassTypes = buildUnionClassTypes(unionBlocks);
-    nexonCandidates = buildNexonCandidates(eligibleCharacters, unionBlocks, nexonHighestCharacter);
+    nexonCandidates = buildNexonCandidates(
+      eligibleCharacters,
+      unionBlocks,
+      nexonHighestCharacter,
+      buildUnionBlockMetadata(unionBlocks),
+    );
 
     const defaultCount = Math.min(nexonSelectionLimit, nexonCandidates.length);
     nexonTopCountInput.max = String(nexonSelectionLimit);
@@ -465,20 +503,43 @@ function buildUnionClassTypes(unionBlocks) {
   return classTypes;
 }
 
-function buildNexonCandidates(characters, unionBlocks, highestCharacter) {
+function buildUnionBlockMetadata(unionBlocks) {
+  const metadata = new Map();
+  unionBlocks.forEach((block) => {
+    if (!block.block_class) {
+      return;
+    }
+
+    const blockPieceId = getPieceIdForUnionBlock(block);
+    metadata.set(block.block_class, {
+      blockType: block.block_type || "",
+      blockLevel: Number(block.block_level || 0),
+      blockPieceId,
+      blockShapeMatches: Boolean(blockPieceId),
+    });
+  });
+  return metadata;
+}
+
+function buildNexonCandidates(characters, unionBlocks, highestCharacter, unionBlockMetadata) {
   const mapleMCharacters = unionBlocks
     .filter((block) => block.block_type === "메이플 M 캐릭터")
-    .map((block, index) => ({
-      id: `maple-m-${index}`,
-      ocid: `maple-m-${index}`,
-      name: "메이플 M 캐릭터",
-      world: highestCharacter.world,
-      className: block.block_class || "모바일 캐릭터",
-      level: Number(block.block_level || 0),
-      blockType: "궁수",
-      blockLevel: Number(block.block_level || 0),
-      isMapleM: true,
-    }));
+    .map((block, index) => {
+      const blockPieceId = getPieceIdForUnionBlock(block);
+      return {
+        id: `maple-m-${index}`,
+        ocid: `maple-m-${index}`,
+        name: "메이플 M 캐릭터",
+        world: highestCharacter.world,
+        className: block.block_class || "모바일 캐릭터",
+        level: Number(block.block_level || 0),
+        blockType: "궁수",
+        blockLevel: Number(block.block_level || 0),
+        blockPieceId,
+        blockShapeMatches: Boolean(blockPieceId),
+        isMapleM: true,
+      };
+    });
 
   const sortedCharacters = [...characters].sort((left, right) => {
     const leftSameWorld = left.world === highestCharacter.world ? 1 : 0;
@@ -492,7 +553,12 @@ function buildNexonCandidates(characters, unionBlocks, highestCharacter) {
     return left.name.localeCompare(right.name, "ko-KR");
   });
 
-  return [...mapleMCharacters, ...sortedCharacters];
+  const enrichedCharacters = sortedCharacters.map((character) => {
+    const metadata = unionBlockMetadata.get(character.className);
+    return metadata ? { ...character, ...metadata } : character;
+  });
+
+  return [...mapleMCharacters, ...enrichedCharacters];
 }
 
 function selectTopNexonCandidates() {
@@ -598,6 +664,7 @@ function applyNexonSelection() {
   });
 
   const skipped = [];
+  const nextIconQueues = new Map();
   selectedCandidates.forEach((candidate) => {
     const pieceId = getPieceIdForCandidate(candidate);
     if (!pieceId || !pieceInputs.has(pieceId)) {
@@ -605,8 +672,13 @@ function applyNexonSelection() {
       return;
     }
     counts[pieceId] += 1;
+    if (!nextIconQueues.has(pieceId)) {
+      nextIconQueues.set(pieceId, []);
+    }
+    nextIconQueues.get(pieceId).push(getControlIconForCandidate(candidate, pieceId));
   });
 
+  pieceControlIconQueues = nextIconQueues;
   Object.entries(counts).forEach(([pieceId, count]) => {
     pieceInputs.get(pieceId).value = String(count);
   });
@@ -626,12 +698,36 @@ function applyNexonSelection() {
 
 function getPieceIdForCandidate(candidate) {
   if (candidate.isMapleM) {
-    return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250_bowman" : "lv200_bowman";
+    if (candidate.blockShapeMatches === false) {
+      return "";
+    }
+
+    return getPieceIdForBlockType("메이플 M 캐릭터", candidate.blockLevel || candidate.level, candidate.className);
   }
 
   const blockType = candidate.blockType || nexonUnionClassTypes.get(candidate.className) || CLASS_TYPE_MAP.get(candidate.className);
-  if (blockType === "하이브리드" || candidate.className === "제논") {
-    return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250_xenon" : "lv200_thief";
+  return getPieceIdForBlockType(blockType, candidate.level, candidate.className);
+}
+
+function getControlIconForCandidate(candidate, pieceId) {
+  if (candidate.className === "제논" || candidate.blockType === "하이브리드" || pieceId === "lv250_xenon") {
+    return JOB_ICON_BY_PIECE_ID.lv250_xenon;
+  }
+
+  if (candidate.isMapleM || candidate.blockType === "메이플 M 캐릭터") {
+    return JOB_ICON_BY_PIECE_ID.beginner;
+  }
+
+  return getDefaultControlIconForPiece(pieceId);
+}
+
+function getPieceIdForBlockType(blockType, level, className) {
+  if (blockType === "메이플 M 캐릭터") {
+    return Number(level || 0) >= 250 ? "lv250_bowman" : "lv200_bowman";
+  }
+
+  if (blockType === "하이브리드" || className === "제논") {
+    return Number(level || 0) >= 250 ? "lv250_xenon" : "lv200_thief";
   }
 
   const pieceType = {
@@ -646,8 +742,131 @@ function getPieceIdForCandidate(candidate) {
     return "";
   }
 
-  const tier = Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "lv250" : "lv200";
+  const tier = Number(level || 0) >= 250 ? "lv250" : "lv200";
   return `${tier}_${pieceType}`;
+}
+
+function getPieceIdForUnionBlock(block) {
+  const pieceId = getPieceIdForBlockType(block.block_type, block.block_level, block.block_class);
+  if (!pieceId) {
+    return "";
+  }
+
+  const piece = PIECES.find((item) => item.id === pieceId);
+  if (!piece || !unionBlockHasShapeData(block)) {
+    return pieceId;
+  }
+
+  return unionBlockMatchesPiece(block, piece) ? pieceId : "";
+}
+
+function unionBlockHasShapeData(block) {
+  return Boolean(
+    block?.block_control_point
+    && Number.isFinite(Number(block.block_control_point.x))
+    && Number.isFinite(Number(block.block_control_point.y))
+    && Array.isArray(block.block_position)
+    && block.block_position.length > 0,
+  );
+}
+
+function unionBlockMatchesPiece(block, piece) {
+  const controlPoint = block.block_control_point;
+  const relativeCells = block.block_position.map((position) => [
+    Number(position.x) - Number(controlPoint.x),
+    Number(position.y) - Number(controlPoint.y),
+  ]);
+
+  return getTransformedControlShapes(piece).has(normalizeRelativeCells(relativeCells));
+}
+
+function getTransformedControlShapes(piece) {
+  if (transformedControlShapeCache.has(piece.id)) {
+    return transformedControlShapeCache.get(piece.id);
+  }
+
+  const shapes = new Set();
+  const controlCells = piece.controlCells.length ? piece.controlCells : piece.cells;
+
+  controlCells.forEach((controlCell) => {
+    [-1, 1].forEach((flipX) => {
+      for (let rotation = 0; rotation < 4; rotation += 1) {
+        const transformedCells = piece.cells.map((cell) => transformPoint(cell, flipX, rotation));
+        const transformedControl = transformPoint(controlCell, flipX, rotation);
+        shapes.add(normalizeRelativeCells(transformedCells.map((cell) => [
+          cell[0] - transformedControl[0],
+          cell[1] - transformedControl[1],
+        ])));
+      }
+    });
+  });
+
+  transformedControlShapeCache.set(piece.id, shapes);
+  return shapes;
+}
+
+function transformPoint(point, flipX, rotation) {
+  let x = point[0] * flipX;
+  let y = point[1];
+
+  for (let index = 0; index < rotation; index += 1) {
+    [x, y] = [-y, x];
+  }
+
+  return [x, y];
+}
+
+function normalizeRelativeCells(cells) {
+  return cells
+    .map(([x, y]) => [Number(x), Number(y)])
+    .sort((left, right) => left[1] - right[1] || left[0] - right[0])
+    .map(([x, y]) => `${x},${y}`)
+    .join(" ");
+}
+
+function getControlIndexesForPlacement(piece, cells) {
+  if (!piece || !Array.isArray(cells) || !cells.length) {
+    return new Set();
+  }
+
+  const placementPoints = cells.map(indexToPoint);
+  const placementMinX = Math.min(...placementPoints.map(([x]) => x));
+  const placementMinY = Math.min(...placementPoints.map(([, y]) => y));
+  const normalizedPlacement = normalizeRelativeCells(placementPoints.map(([x, y]) => [
+    x - placementMinX,
+    y - placementMinY,
+  ]));
+  const controlIndexes = new Set();
+  const controlCells = piece.controlCells.length ? piece.controlCells : piece.cells;
+
+  [-1, 1].forEach((flipX) => {
+    for (let rotation = 0; rotation < 4; rotation += 1) {
+      const transformedCells = piece.cells.map((cell) => transformPoint(cell, flipX, rotation));
+      const transformedMinX = Math.min(...transformedCells.map(([x]) => x));
+      const transformedMinY = Math.min(...transformedCells.map(([, y]) => y));
+      const normalizedTransformed = normalizeRelativeCells(transformedCells.map(([x, y]) => [
+        x - transformedMinX,
+        y - transformedMinY,
+      ]));
+
+      if (normalizedTransformed !== normalizedPlacement) {
+        continue;
+      }
+
+      controlCells.forEach((controlCell) => {
+        const transformedControl = transformPoint(controlCell, flipX, rotation);
+        const x = placementMinX + transformedControl[0] - transformedMinX;
+        const y = placementMinY + transformedControl[1] - transformedMinY;
+        controlIndexes.add(toIndex(y, x));
+      });
+    }
+  });
+
+  return controlIndexes;
+}
+
+function indexToPoint(index) {
+  return [index % BOARD_WIDTH, Math.floor(index / BOARD_WIDTH)];
 }
 
 function getPieceLabelForCandidate(candidate) {
@@ -655,7 +874,7 @@ function getPieceLabelForCandidate(candidate) {
     return Number(candidate.blockLevel || candidate.level || 0) >= 250 ? "Lv.250 메이플 M" : "Lv.120 메이플 M";
   }
 
-  if (candidate.className === "제논" && Number(candidate.blockLevel || candidate.level || 0) < 250) {
+  if (candidate.className === "제논" && Number(candidate.level || 0) < 250) {
     return "Lv.200 제논";
   }
 
@@ -685,6 +904,9 @@ function renderNexonPiecePreview(candidate) {
       dot.className = "nexon-piece-preview-cell";
       if (piece.shape[y][x] > 0) {
         dot.classList.add("active");
+      }
+      if (piece.shape[y][x] === 2) {
+        dot.classList.add("control");
       }
       preview.append(dot);
     }
@@ -765,7 +987,6 @@ function startSolve() {
   const target = boardState.map((value, index) => (value ? index : -1)).filter((value) => value !== -1);
   const pieceCounts = getPieceCounts();
   const totalPieceCells = PIECES.reduce((sum, piece) => sum + piece.cells.length * pieceCounts[piece.id], 0);
-  const isHeuristicMode = ["heuristic_fast", "heuristic_pruned", "heuristic_late_prune"].includes(solverMode);
 
   if (!target.length) {
     setStatus("목표 칸 없음");
@@ -773,15 +994,9 @@ function startSolve() {
     return;
   }
 
-  if (isHeuristicMode && target.length !== totalPieceCells) {
+  if (target.length !== totalPieceCells) {
     setStatus("칸 수 불일치");
     setBoardCaption(`목표 칸 ${target.length}칸과 조각 칸 ${totalPieceCells}칸이 같아야 합니다.`);
-    return;
-  }
-
-  if (!isHeuristicMode && target.length > totalPieceCells) {
-    setStatus("조각 부족");
-    setBoardCaption(`목표 칸 ${target.length}칸을 덮으려면 조각 칸이 최소 ${target.length}칸 이상 필요합니다.`);
     return;
   }
 
@@ -794,7 +1009,7 @@ function startSolve() {
   elapsedTimeElement.textContent = "0.00s";
   iterationCountElement.textContent = "0";
   setBoardCaption(liveSolveEnabled
-    ? "실시간 보기로 배치를 그리면서 탐색 중입니다."
+    ? "중앙 4칸 기준점 후보를 고정하고 실시간 탐색 중입니다."
     : solverMode === "exact_cover"
       ? "정확 탐색으로 배치를 계산하고 있습니다."
       : solverMode === "branch_and_bound"
@@ -810,6 +1025,7 @@ function startSolve() {
     timeoutMs: Math.max(1, Number(timeoutInput.value || 120)) * 1000,
     liveSolve: liveSolveEnabled,
     solverMode,
+    requireCenterControl: true,
   });
 }
 
@@ -849,7 +1065,7 @@ function handleWorkerMessage(event) {
   if (data.status === "ok") {
     applySolution(data.placements);
     setStatus("완료");
-    setBoardCaption("배치를 찾았습니다.");
+    setBoardCaption("중앙 4칸 기준점 조건을 만족하는 배치를 찾았습니다.");
   } else if (data.status === "timeout") {
     clearSolution();
     setStatus("타임아웃");
@@ -870,6 +1086,7 @@ function handleWorkerMessage(event) {
 
 function applySolution(placements) {
   solutionMap.clear();
+  const iconQueues = buildPlacementIconQueues();
 
   placements.forEach((placement, placementIndex) => {
     const piece = PIECES.find((item) => item.id === placement.pieceId);
@@ -878,10 +1095,16 @@ function applySolution(placements) {
     }
 
     const placementId = `${placement.pieceId}:${placementIndex}`;
+    const controlIcon = getControlIconForPiece(placement.pieceId, iconQueues);
+    const controlIndexes = Number.isInteger(placement.centerIndex)
+      ? new Set([placement.centerIndex])
+      : getSingleControlIndexForPlacement(piece, placement.cells);
     placement.cells.forEach((index) => {
       solutionMap.set(index, {
         color: piece.color,
         placementId,
+        controlIcon,
+        isControl: controlIndexes.has(index),
       });
     });
   });
@@ -892,6 +1115,34 @@ function applySolution(placements) {
 function clearSolution() {
   solutionMap.clear();
   paintBoard();
+}
+
+function getSingleControlIndexForPlacement(piece, cells) {
+  const controlIndexes = [...getControlIndexesForPlacement(piece, cells)];
+  if (!controlIndexes.length) {
+    return new Set();
+  }
+  return new Set([controlIndexes.sort((left, right) => left - right)[0]]);
+}
+
+function buildPlacementIconQueues() {
+  const iconQueues = new Map();
+  pieceControlIconQueues.forEach((icons, pieceId) => {
+    iconQueues.set(pieceId, [...icons]);
+  });
+  return iconQueues;
+}
+
+function getControlIconForPiece(pieceId, iconQueues = null) {
+  const queuedIcons = iconQueues?.get(pieceId);
+  if (queuedIcons?.length) {
+    return queuedIcons.shift();
+  }
+  return getDefaultControlIconForPiece(pieceId);
+}
+
+function getDefaultControlIconForPiece(pieceId) {
+  return JOB_ICON_BY_PIECE_ID[pieceId] || JOB_ICON_BY_PIECE_ID.common;
 }
 
 function persistState() {
@@ -1093,12 +1344,13 @@ function formatNumber(value) {
   return new Intl.NumberFormat("ko-KR").format(value);
 }
 
-function getCellsFromShape(shape) {
+function getCellsFromShape(shape, targetValue = null) {
   const cells = [];
 
   for (let y = 0; y < shape.length; y += 1) {
     for (let x = 0; x < shape[y].length; x += 1) {
-      if (shape[y][x] > 0) {
+      const value = shape[y][x];
+      if (targetValue === null ? value > 0 : value === targetValue) {
         cells.push([x, y]);
       }
     }

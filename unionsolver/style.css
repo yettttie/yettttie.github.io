@@ -301,6 +301,10 @@ select {
   border-color: rgba(243, 240, 255, 0.18);
 }
 
+.piece-preview-cell.control {
+  box-shadow: inset 0 0 0 2px rgba(24, 24, 24, 0.38);
+}
+
 .piece-meta {
   min-width: 0;
 }
@@ -563,6 +567,10 @@ select {
   background: var(--piece-color);
 }
 
+.nexon-piece-preview-cell.control {
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 24, 0.5);
+}
+
 .nexon-character-badge {
   padding: 5px 8px;
   border: 1px solid var(--line);
@@ -671,6 +679,7 @@ select {
 }
 
 .board-cell {
+  position: relative;
   aspect-ratio: 1 / 1;
   border: 1px solid var(--line);
   border-style: solid;
@@ -693,6 +702,20 @@ select {
 
 .board-cell.solution {
   border-color: var(--solution-cell-line);
+}
+
+.board-cell.solution-control::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: clamp(20px, 96%, 34px);
+  height: clamp(20px, 96%, 34px);
+  background: var(--control-icon) center / contain no-repeat;
+  content: "";
+  filter: drop-shadow(0 1px 2px rgba(24, 24, 24, 0.36));
+  image-rendering: pixelated;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 1;
 }
 
 .piece-note {
