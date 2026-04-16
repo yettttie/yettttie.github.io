@@ -61,7 +61,7 @@ async function solveRequest(data) {
 }
 
 function shouldUseWasmLiveSolver(data) {
-  return Boolean(data.liveSolve)
+  return (Boolean(data.liveSolve) || data.solverMode === "branch_and_bound")
     && (
       data.solverMode === "exact_cover"
       || data.solverMode === "branch_and_bound"
@@ -95,7 +95,7 @@ async function solveWithWasmLive(data) {
   let lastProgressIterations = 0;
 
   postProgress({
-    statusMessage: "실시간 탐색 중",
+    statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
     startTime,
     iterations: 0,
   });
@@ -124,10 +124,10 @@ async function solveWithWasmLive(data) {
         && now - lastProgressAt >= 100
       ) {
         postProgress({
-          statusMessage: "실시간 탐색 중",
+          statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
           startTime,
           iterations: result.iterations,
-          placements: result.placements,
+          placements: data.liveSolve ? result.placements : undefined,
         });
         lastProgressAt = now;
         lastProgressIterations = result.iterations;
