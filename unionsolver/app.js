@@ -1,6 +1,6 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
-const ASSET_VERSION = "20260417-exact-cell-match-1";
+const ASSET_VERSION = "20260418-center-candidate-slicing-6";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
 const NEXON_API_BASE = "https://open.api.nexon.com/maplestory/v1";
@@ -1009,7 +1009,7 @@ function startSolve() {
   elapsedTimeElement.textContent = "0.00s";
   iterationCountElement.textContent = "0";
   setBoardCaption(liveSolveEnabled
-    ? "중앙 4칸 기준점 후보를 고정하고 실시간 탐색 중입니다."
+    ? "중앙 4칸 기준점 후보를 순환하며 실시간 탐색 중입니다."
     : solverMode === "exact_cover"
       ? "정확 탐색으로 배치를 계산하고 있습니다."
       : solverMode === "branch_and_bound"

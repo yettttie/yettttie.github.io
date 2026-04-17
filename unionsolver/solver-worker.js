@@ -16,7 +16,8 @@ const PIECE_SHAPES = [
   controlCells: getCellsFromShape(piece.shape, 2),
 }));
 
-const ASSET_VERSION = "20260417-exact-cell-match-1";
+const ASSET_VERSION = "20260418-center-candidate-slicing-6";
+const CENTER_CANDIDATE_BUDGETS_MS = [30000, 60000, 120000];
 
 let cancelled = false;
 let wasmExportsPromise = null;
@@ -44,6 +45,18 @@ async function solveRequest(data) {
     finish({
       status: "unsolved",
       message: `목표 칸 ${Array.isArray(data.target) ? data.target.length : 0}칸과 조각 칸 ${totalPieceCells}칸이 같아야 합니다.`,
+      placements: [],
+      startTime: Date.now(),
+      iterations: 0,
+      engineLabel: "WASM",
+    });
+    return;
+  }
+
+  if (hasImpossibleRemainingComponent(data.target, data.pieceCounts, data.width)) {
+    finish({
+      status: "unsolved",
+      message: "목표 영역에 남은 블럭 조합으로 채울 수 없는 고립 영역이 있습니다.",
       placements: [],
       startTime: Date.now(),
       iterations: 0,
@@ -104,7 +117,7 @@ async function solveRequest(data) {
 }
 
 function shouldUseWasmLiveSolver(data) {
-  return (Boolean(data.liveSolve) || data.solverMode === "branch_and_bound")
+  return (Boolean(data.liveSolve) || data.solverMode === "branch_and_bound" || Number(data.candidateBudgetMs || 0) > 0)
     && (
       data.solverMode === "exact_cover"
       || data.solverMode === "branch_and_bound"
@@ -150,13 +163,143 @@ async function solveWithCenterControl(data) {
   let totalIterations = 0;
   let timedOut = false;
   const timeoutMs = Math.max(1, Math.floor(Number(data.timeoutMs || 0)));
+  let passIndex = 0;
 
-  for (const candidate of candidates) {
-    if (cancelled) {
+  while (!timedOut) {
+    let deferredCandidate = false;
+
+    for (const candidate of candidates) {
+      if (cancelled) {
+        return {
+          result: {
+            status: "cancelled",
+            message: "중지됨",
+            placements: [],
+            startTime,
+            iterations: totalIterations,
+          },
+        };
+      }
+
+      const elapsedMs = Date.now() - startTime;
+      const remainingMs = timeoutMs - elapsedMs;
+      if (remainingMs <= 0) {
+        timedOut = true;
+        break;
+      }
+
+      const candidateBudgetMs = getCenterCandidateBudgetMs(passIndex, remainingMs);
+      const fixedCells = new Set(candidate.cells);
+      const pieceCounts = { ...data.pieceCounts };
+      pieceCounts[candidate.pieceId] = Math.max(0, Number(pieceCounts[candidate.pieceId] || 0) - 1);
+      const target = data.target.filter((cell) => !fixedCells.has(cell));
+      if (target.length !== getTotalPieceCellCount(pieceCounts)) {
+        continue;
+      }
+      if (hasImpossibleRemainingComponent(target, pieceCounts, data.width)) {
+        continue;
+      }
+      if (data.liveSolve) {
+        postProgress({
+          statusMessage: `중앙 기준점 후보 탐색 중 (${passIndex + 1}회차)`,
+          startTime,
+          iterations: totalIterations,
+          placements: [candidate],
+        });
+      }
+
+      if (target.length === 0 && isValidCombinedPlacement([candidate], data.target, data.width, data.height)) {
+        return {
+          result: {
+            status: "ok",
+            placements: [candidate],
+            startTime,
+            iterations: totalIterations,
+          },
+        };
+      }
+
+      const innerRequest = {
+        ...data,
+        target,
+        pieceCounts,
+        timeoutMs: Math.min(remainingMs, candidateBudgetMs),
+        candidateBudgetMs,
+        fixedPlacements: [candidate],
+        iterationOffset: totalIterations,
+        startTimeOverride: startTime,
+        requireCenterControl: false,
+      };
+      const wasmResult = shouldUseWasmLiveSolver(innerRequest)
+        ? await solveWithWasmLive({
+          ...innerRequest,
+          liveSolve: data.liveSolve,
+        })
+        : await solveWithWasm({
+          ...innerRequest,
+          liveSolve: false,
+        });
+
+      const result = wasmResult?.result;
+      totalIterations += result?.iterations || 0;
+
+      if (!result) {
+        return null;
+      }
+
+      if (result.status === "candidate_timeout") {
+        deferredCandidate = true;
+        continue;
+      }
+
+      if (result.status === "timeout") {
+        const hasTimeForNextCandidate = Date.now() - startTime < timeoutMs;
+        if (hasTimeForNextCandidate) {
+          deferredCandidate = true;
+          continue;
+        }
+        timedOut = true;
+        break;
+      }
+
+      if (result.status === "cancelled") {
+        return {
+          result: {
+            ...result,
+            startTime,
+            iterations: totalIterations,
+          },
+        };
+      }
+
+      if (result.status !== "ok") {
+        continue;
+      }
+
+      const placements = [candidate, ...result.placements];
+      if (!isValidCombinedPlacement(placements, data.target, data.width, data.height)) {
+        continue;
+      }
+
       return {
         result: {
-          status: "cancelled",
-          message: "중지됨",
+          status: "ok",
+          placements,
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    if (timedOut) {
+      break;
+    }
+
+    if (!deferredCandidate) {
+      return {
+        result: {
+          status: "unsolved",
+          message: "중앙 4칸 기준점 조건을 만족하는 배치를 찾지 못했습니다.",
           placements: [],
           startTime,
           iterations: totalIterations,
@@ -164,96 +307,7 @@ async function solveWithCenterControl(data) {
       };
     }
 
-    const elapsedMs = Date.now() - startTime;
-    const remainingMs = timeoutMs - elapsedMs;
-    if (remainingMs <= 0) {
-      timedOut = true;
-      break;
-    }
-
-    const fixedCells = new Set(candidate.cells);
-    const pieceCounts = { ...data.pieceCounts };
-    pieceCounts[candidate.pieceId] = Math.max(0, Number(pieceCounts[candidate.pieceId] || 0) - 1);
-    const target = data.target.filter((cell) => !fixedCells.has(cell));
-    if (data.liveSolve) {
-      postProgress({
-        statusMessage: "중앙 기준점 후보 탐색 중",
-        startTime,
-        iterations: totalIterations,
-        placements: [candidate],
-      });
-    }
-
-    if (target.length === 0 && isValidCombinedPlacement([candidate], data.target, data.width, data.height)) {
-      return {
-        result: {
-          status: "ok",
-          placements: [candidate],
-          startTime,
-          iterations: totalIterations,
-        },
-      };
-    }
-
-    const innerRequest = {
-      ...data,
-      target,
-      pieceCounts,
-      timeoutMs: remainingMs,
-      fixedPlacements: [candidate],
-      iterationOffset: totalIterations,
-      startTimeOverride: startTime,
-      requireCenterControl: false,
-    };
-    const wasmResult = data.liveSolve
-      ? await solveWithWasmLive({
-        ...innerRequest,
-        liveSolve: true,
-      })
-      : await solveWithWasm({
-        ...innerRequest,
-        liveSolve: false,
-      });
-
-    const result = wasmResult?.result;
-    totalIterations += result?.iterations || 0;
-
-    if (!result) {
-      return null;
-    }
-
-    if (result.status === "timeout") {
-      timedOut = true;
-      break;
-    }
-
-    if (result.status === "cancelled") {
-      return {
-        result: {
-          ...result,
-          startTime,
-          iterations: totalIterations,
-        },
-      };
-    }
-
-    if (result.status !== "ok") {
-      continue;
-    }
-
-    const placements = [candidate, ...result.placements];
-    if (!isValidCombinedPlacement(placements, data.target, data.width, data.height)) {
-      continue;
-    }
-
-    return {
-      result: {
-        status: "ok",
-        placements,
-        startTime,
-        iterations: totalIterations,
-      },
-    };
+    passIndex += 1;
   }
 
   return {
@@ -265,6 +319,98 @@ async function solveWithCenterControl(data) {
       iterations: totalIterations,
     },
   };
+}
+
+function getCenterCandidateBudgetMs(passIndex, remainingMs) {
+  const budget = CENTER_CANDIDATE_BUDGETS_MS[Math.min(
+    Math.max(0, Math.floor(Number(passIndex || 0))),
+    CENTER_CANDIDATE_BUDGETS_MS.length - 1,
+  )];
+
+  return Math.max(1, Math.min(Math.max(1, Math.floor(Number(remainingMs || 0))), budget));
+}
+
+function getTotalPieceCellCount(pieceCounts) {
+  return PIECE_SHAPES.reduce((sum, piece) => (
+    sum + piece.cells.length * Math.max(0, Math.floor(Number(pieceCounts[piece.pieceId] || 0)))
+  ), 0);
+}
+
+function hasImpossibleRemainingComponent(target, pieceCounts, width) {
+  if (!Array.isArray(target) || target.length === 0) {
+    return false;
+  }
+
+  const pieceSizeCounts = new Map();
+  PIECE_SHAPES.forEach((piece) => {
+    const count = Math.max(0, Math.floor(Number(pieceCounts[piece.pieceId] || 0)));
+    if (count > 0) {
+      pieceSizeCounts.set(piece.cells.length, (pieceSizeCounts.get(piece.cells.length) || 0) + count);
+    }
+  });
+
+  if (!pieceSizeCounts.size) {
+    return target.length > 0;
+  }
+
+  const remaining = new Set(target);
+  const offsets = [-width, width, -1, 1];
+
+  for (const start of target) {
+    if (!remaining.has(start)) {
+      continue;
+    }
+
+    let componentSize = 0;
+    const stack = [start];
+    remaining.delete(start);
+
+    while (stack.length) {
+      const cell = stack.pop();
+      componentSize += 1;
+      const col = cell % width;
+
+      for (const offset of offsets) {
+        if ((offset === -1 && col === 0) || (offset === 1 && col === width - 1)) {
+          continue;
+        }
+
+        const next = cell + offset;
+        if (!remaining.has(next)) {
+          continue;
+        }
+
+        remaining.delete(next);
+        stack.push(next);
+      }
+    }
+
+    if (!canFillComponentSize(componentSize, pieceSizeCounts)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function canFillComponentSize(componentSize, pieceSizeCounts) {
+  const maxFourCount = Math.min(pieceSizeCounts.get(4) || 0, Math.floor(componentSize / 4));
+  const maxFiveCount = Math.min(pieceSizeCounts.get(5) || 0, Math.floor(componentSize / 5));
+
+  for (let fourCount = 0; fourCount <= maxFourCount; fourCount += 1) {
+    const remainingSize = componentSize - fourCount * 4;
+    if (remainingSize < 0) {
+      break;
+    }
+    if (remainingSize % 5 !== 0) {
+      continue;
+    }
+    if (remainingSize / 5 <= maxFiveCount) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getCenterControlCandidates(data) {
@@ -407,6 +553,8 @@ async function solveWithWasmLive(data) {
   const startTime = data.startTimeOverride || Date.now();
   const iterationOffset = Math.max(0, Math.floor(Number(data.iterationOffset || 0)));
   const liveBatchSize = getLiveBatchSize(data.solverMode);
+  const candidateBudgetMs = Math.max(0, Math.floor(Number(data.candidateBudgetMs || 0)));
+  const candidateStartTime = Date.now();
   let lastProgressAt = startTime;
   let lastProgressIterations = 0;
 
@@ -436,6 +584,21 @@ async function solveWithWasmLive(data) {
 
     while (result.status === "progress") {
       const now = Date.now();
+      if (candidateBudgetMs > 0 && now - candidateStartTime >= candidateBudgetMs) {
+        if (typeof wasmExports.clear_live_session === "function") {
+          wasmExports.clear_live_session();
+        }
+        return {
+          result: {
+            status: "candidate_timeout",
+            message: "중앙 기준점 후보 시간 초과",
+            placements: getProgressPlacements(data, result.placements),
+            startTime,
+            iterations: result.iterations,
+          },
+        };
+      }
+
       if (
         result.iterations - lastProgressIterations >= liveBatchSize
         && now - lastProgressAt >= 100
@@ -476,6 +639,21 @@ async function solveWithWasmLive(data) {
       if (!result) {
         return null;
       }
+    }
+
+    if (result.status === "timeout" && candidateBudgetMs > 0) {
+      if (typeof wasmExports.clear_live_session === "function") {
+        wasmExports.clear_live_session();
+      }
+      return {
+        result: {
+          status: "candidate_timeout",
+          message: "중앙 기준점 후보 시간 초과",
+          placements: getProgressPlacements(data, result.placements),
+          startTime,
+          iterations: result.iterations,
+        },
+      };
     }
 
     if (result.status === "ok" && typeof wasmExports.clear_live_session === "function") {
