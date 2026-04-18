@@ -1,7 +1,7 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
 const BOARD_SLOT_COUNT = 5;
-const ASSET_VERSION = "20260419-corner-packages-39";
+const ASSET_VERSION = "20260419-corner-packages-41";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const THEME_STORAGE_KEY = "yettttie-union-solver-theme";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
@@ -1089,6 +1089,7 @@ function getCompactStatus(text) {
     ["정확 탐색을 실행합니다.", "정확 탐색"],
     ["최적화 탐색을 실행합니다.", "최적화 탐색"],
     ["자동 배치를 탐색합니다.", "자동 탐색"],
+    ["먼저 일반 탐색을 시도합니다.", "일반 탐색"],
     ["탐색합니다.", "탐색"],
     ["중앙 기준점을 탐색합니다.", "중앙 기준점 탐색"],
     ["배치를 찾았습니다.", "배치 완료"],

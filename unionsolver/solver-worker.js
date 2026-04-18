@@ -16,8 +16,9 @@ const PIECE_SHAPES = [
   controlCells: getCellsFromShape(piece.shape, 2),
 }));
 
-const ASSET_VERSION = "20260419-corner-packages-39";
+const ASSET_VERSION = "20260419-corner-packages-41";
 const CENTER_CANDIDATE_BUDGETS_MS = [30000, 60000, 120000];
+const CORNER_PACKAGE_PREFLIGHT_MS = 200;
 const CORNER_PACKAGE_MIN_PIECES = 4;
 const CORNER_PACKAGE_MAX_PIECES = 6;
 const CORNER_PACKAGE_WINDOW_SIZE = 8;
@@ -87,10 +88,42 @@ async function solveRequest(data) {
   }
 
   if (data.useCornerPackages) {
-    const cornerPackageResult = await solveWithCornerPackages(data);
+    const startTime = Date.now();
+    const preflightResult = await solveWithoutCornerPackagesPreflight(data, startTime);
+    const preflight = preflightResult?.result;
+    const preflightIterations = Math.max(0, Math.floor(Number(preflight?.iterations || 0)));
+
+    if (preflight?.status === "ok" || preflight?.status === "cancelled") {
+      finish({
+        ...preflight,
+        message: preflight.message || (preflight.status === "ok" ? "배치를 찾았습니다." : "중지됨"),
+        engineLabel: "WASM",
+      });
+      return;
+    }
+
+    if (Date.now() - startTime >= Math.max(1, Math.floor(Number(data.timeoutMs || 0)))) {
+      finish({
+        status: "timeout",
+        message: "타임아웃",
+        placements: [],
+        startTime,
+        iterations: preflightIterations,
+        engineLabel: "WASM",
+      });
+      return;
+    }
+
+    const cornerPackageResult = await solveWithCornerPackages({
+      ...data,
+      startTimeOverride: startTime,
+      iterationOffset: Math.max(0, Math.floor(Number(data.iterationOffset || 0))) + preflightIterations,
+    });
     if (cornerPackageResult?.result) {
+      const resultIterations = Math.max(0, Math.floor(Number(cornerPackageResult.result.iterations || 0)));
       finish({
         ...cornerPackageResult.result,
+        iterations: preflightIterations + resultIterations,
         message: cornerPackageResult.result.message || "배치를 찾았습니다.",
         engineLabel: "WASM",
       });
@@ -146,6 +179,43 @@ async function solveRequest(data) {
     startTime: Date.now(),
     iterations: 0,
     engineLabel: "WASM",
+  });
+}
+
+async function solveWithoutCornerPackagesPreflight(data, startTime) {
+  if (!isSupportedWasmMode(data.solverMode) || cancelled) {
+    return null;
+  }
+
+  const timeoutMs = Math.max(1, Math.floor(Number(data.timeoutMs || 0)));
+  const preflightMs = Math.min(CORNER_PACKAGE_PREFLIGHT_MS, timeoutMs);
+  const preflightRequest = {
+    ...data,
+    timeoutMs: preflightMs,
+    candidateBudgetMs: preflightMs,
+    startTimeOverride: startTime,
+    iterationOffset: Math.max(0, Math.floor(Number(data.iterationOffset || 0))),
+    useCornerPackages: false,
+  };
+
+  postProgress({
+    statusMessage: "먼저 일반 탐색을 시도합니다.",
+    startTime,
+    iterations: preflightRequest.iterationOffset,
+    placements: data.liveSolve ? getProgressPlacements(data, []) : undefined,
+  });
+
+  if (data.requireCenterControl) {
+    return solveWithCenterControl(preflightRequest);
+  }
+
+  if (shouldUseWasmLiveSolver(preflightRequest)) {
+    return solveWithWasmLive(preflightRequest);
+  }
+
+  return solveWithWasm({
+    ...preflightRequest,
+    liveSolve: false,
   });
 }
 
