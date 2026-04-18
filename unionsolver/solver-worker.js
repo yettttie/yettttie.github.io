@@ -16,8 +16,29 @@ const PIECE_SHAPES = [
   controlCells: getCellsFromShape(piece.shape, 2),
 }));
 
-const ASSET_VERSION = "20260418-center-candidate-slicing-6";
+const ASSET_VERSION = "20260419-corner-packages-39";
 const CENTER_CANDIDATE_BUDGETS_MS = [30000, 60000, 120000];
+const CORNER_PACKAGE_MIN_PIECES = 4;
+const CORNER_PACKAGE_MAX_PIECES = 6;
+const CORNER_PACKAGE_WINDOW_SIZE = 8;
+const CORNER_PACKAGE_MAX_CANDIDATES = 72;
+const CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER = 24;
+const CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE = 36;
+const CORNER_PACKAGE_MAX_BRANCH_PLACEMENTS = 12;
+const CORNER_PACKAGE_BUDGETS_MS = [30000, 60000, 90000];
+const CORNER_PACKAGE_MIN_PRIORITY_PIECES = 2;
+const CORNER_PACKAGE_PRIORITY_MAX_SCORE = 45;
+const CORNER_PACKAGE_PRIORITY_PIECE_IDS = new Set([
+  "lv250_magician",
+  "lv250_thief",
+  "lv250_xenon",
+]);
+const CORNER_PACKAGE_SUPPORT_PIECE_IDS = new Set([
+  "lv250_bowman",
+  "lv250_warrior",
+  "lv200_bowman",
+  "lv200_warrior",
+]);
 
 let cancelled = false;
 let wasmExportsPromise = null;
@@ -65,6 +86,18 @@ async function solveRequest(data) {
     return;
   }
 
+  if (data.useCornerPackages) {
+    const cornerPackageResult = await solveWithCornerPackages(data);
+    if (cornerPackageResult?.result) {
+      finish({
+        ...cornerPackageResult.result,
+        message: cornerPackageResult.result.message || "배치를 찾았습니다.",
+        engineLabel: "WASM",
+      });
+      return;
+    }
+  }
+
   if (data.requireCenterControl) {
     const centeredResult = await solveWithCenterControl(data);
     if (centeredResult?.result) {
@@ -77,7 +110,7 @@ async function solveRequest(data) {
 
     finish({
       status: "unsolved",
-      message: "중앙 4칸 기준점 조건 탐색을 실행하지 못했습니다.",
+      message: "중앙 기준점 탐색에 실패했습니다.",
       placements: [],
       startTime: Date.now(),
       iterations: 0,
@@ -108,7 +141,7 @@ async function solveRequest(data) {
 
   finish({
     status: "unsolved",
-    message: "탐색 엔진을 로드하지 못했습니다.",
+    message: "탐색 엔진을 불러오지 못했습니다.",
     placements: [],
     startTime: Date.now(),
     iterations: 0,
@@ -117,7 +150,9 @@ async function solveRequest(data) {
 }
 
 function shouldUseWasmLiveSolver(data) {
-  return (Boolean(data.liveSolve) || data.solverMode === "branch_and_bound" || Number(data.candidateBudgetMs || 0) > 0)
+  const hasCandidateBudget = Number(data.candidateBudgetMs || 0) > 0;
+
+  return (Boolean(data.liveSolve) || hasCandidateBudget)
     && (
       data.solverMode === "exact_cover"
       || data.solverMode === "branch_and_bound"
@@ -140,13 +175,15 @@ async function solveWithCenterControl(data) {
     return null;
   }
 
-  const startTime = Date.now();
+  const startTime = data.startTimeOverride || Date.now();
+  const iterationOffset = Math.max(0, Math.floor(Number(data.iterationOffset || 0)));
+  const baseFixedPlacements = Array.isArray(data.fixedPlacements) ? data.fixedPlacements : [];
   const candidates = getCenterControlCandidates(data);
   if (!candidates.length) {
     return {
       result: {
         status: "unsolved",
-        message: "중앙 4칸에 기준점을 둘 수 있는 블럭이 없습니다.",
+        message: "중앙 기준점 후보가 없습니다.",
         placements: [],
         startTime,
         iterations: 0,
@@ -155,9 +192,10 @@ async function solveWithCenterControl(data) {
   }
 
   postProgress({
-    statusMessage: "중앙 기준점 조건 탐색 중",
+    statusMessage: "중앙 기준점을 탐색합니다.",
     startTime,
-    iterations: 0,
+    iterations: iterationOffset,
+    placements: data.liveSolve ? baseFixedPlacements : undefined,
   });
 
   let totalIterations = 0;
@@ -193,6 +231,7 @@ async function solveWithCenterControl(data) {
       const pieceCounts = { ...data.pieceCounts };
       pieceCounts[candidate.pieceId] = Math.max(0, Number(pieceCounts[candidate.pieceId] || 0) - 1);
       const target = data.target.filter((cell) => !fixedCells.has(cell));
+      const fixedPlacements = [...baseFixedPlacements, candidate];
       if (target.length !== getTotalPieceCellCount(pieceCounts)) {
         continue;
       }
@@ -201,18 +240,18 @@ async function solveWithCenterControl(data) {
       }
       if (data.liveSolve) {
         postProgress({
-          statusMessage: `중앙 기준점 후보 탐색 중 (${passIndex + 1}회차)`,
+          statusMessage: `중앙 후보를 탐색합니다. (${passIndex + 1}회차)`,
           startTime,
-          iterations: totalIterations,
-          placements: [candidate],
+          iterations: iterationOffset + totalIterations,
+          placements: fixedPlacements,
         });
       }
 
-      if (target.length === 0 && isValidCombinedPlacement([candidate], data.target, data.width, data.height)) {
+      if (target.length === 0 && isValidCombinedPlacement(fixedPlacements, data.originalTarget || data.target, data.width, data.height)) {
         return {
           result: {
             status: "ok",
-            placements: [candidate],
+            placements: fixedPlacements,
             startTime,
             iterations: totalIterations,
           },
@@ -225,10 +264,11 @@ async function solveWithCenterControl(data) {
         pieceCounts,
         timeoutMs: Math.min(remainingMs, candidateBudgetMs),
         candidateBudgetMs,
-        fixedPlacements: [candidate],
-        iterationOffset: totalIterations,
+        fixedPlacements,
+        iterationOffset: iterationOffset + totalIterations,
         startTimeOverride: startTime,
         requireCenterControl: false,
+        useCornerPackages: false,
       };
       const wasmResult = shouldUseWasmLiveSolver(innerRequest)
         ? await solveWithWasmLive({
@@ -276,8 +316,8 @@ async function solveWithCenterControl(data) {
         continue;
       }
 
-      const placements = [candidate, ...result.placements];
-      if (!isValidCombinedPlacement(placements, data.target, data.width, data.height)) {
+      const placements = [...fixedPlacements, ...result.placements];
+      if (!isValidCombinedPlacement(placements, data.originalTarget || data.target, data.width, data.height)) {
         continue;
       }
 
@@ -299,7 +339,7 @@ async function solveWithCenterControl(data) {
       return {
         result: {
           status: "unsolved",
-          message: "중앙 4칸 기준점 조건을 만족하는 배치를 찾지 못했습니다.",
+          message: "조건에 맞는 배치를 찾지 못했습니다.",
           placements: [],
           startTime,
           iterations: totalIterations,
@@ -313,7 +353,7 @@ async function solveWithCenterControl(data) {
   return {
     result: {
       status: timedOut ? "timeout" : "unsolved",
-      message: timedOut ? "타임아웃" : "중앙 4칸 기준점 조건을 만족하는 배치를 찾지 못했습니다.",
+      message: timedOut ? "타임아웃" : "조건에 맞는 배치를 찾지 못했습니다.",
       placements: [],
       startTime,
       iterations: totalIterations,
@@ -328,6 +368,206 @@ function getCenterCandidateBudgetMs(passIndex, remainingMs) {
   )];
 
   return Math.max(1, Math.min(Math.max(1, Math.floor(Number(remainingMs || 0))), budget));
+}
+
+async function solveWithCornerPackages(data) {
+  if (!isSupportedWasmMode(data.solverMode) || cancelled) {
+    return null;
+  }
+
+  const startTime = data.startTimeOverride || Date.now();
+  const iterationOffset = Math.max(0, Math.floor(Number(data.iterationOffset || 0)));
+  const baseFixedPlacements = Array.isArray(data.fixedPlacements) ? data.fixedPlacements : [];
+  const timeoutMs = Math.max(1, Math.floor(Number(data.timeoutMs || 0)));
+  const candidates = getCornerPackageCandidates(data);
+  if (!candidates.length) {
+    return {
+      result: {
+        status: "unsolved",
+        message: "모서리 패키지 후보가 없습니다.",
+        placements: [],
+        startTime,
+        iterations: 0,
+      },
+    };
+  }
+
+  postProgress({
+    statusMessage: `모서리 후보 ${candidates.length}개를 찾았습니다.`,
+    startTime,
+    iterations: iterationOffset,
+    placements: data.liveSolve ? baseFixedPlacements : undefined,
+  });
+
+  let totalIterations = 0;
+  let timedOut = false;
+
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    if (cancelled) {
+      return {
+        result: {
+          status: "cancelled",
+          message: "중지됨",
+          placements: [],
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = timeoutMs - elapsedMs;
+    if (remainingMs <= 0) {
+      timedOut = true;
+      break;
+    }
+
+    const candidate = candidates[candidateIndex];
+    const packageBudgetMs = getCornerPackageBudgetMs(candidateIndex, remainingMs);
+    const pieceCounts = decrementPieceCountsForPlacements(data.pieceCounts, candidate.placements);
+    if (!pieceCounts) {
+      continue;
+    }
+
+    const fixedCells = new Set(candidate.cells);
+    const target = data.target.filter((cell) => !fixedCells.has(cell));
+    if (target.length !== getTotalPieceCellCount(pieceCounts)) {
+      continue;
+    }
+    if (hasImpossibleRemainingComponent(target, pieceCounts, data.width)) {
+      continue;
+    }
+
+    const fixedPlacements = [...baseFixedPlacements, ...candidate.placements];
+    postProgress({
+      statusMessage: `모서리 후보를 탐색합니다. (${candidateIndex + 1}/${candidates.length})`,
+      startTime,
+      iterations: iterationOffset + totalIterations,
+      placements: data.liveSolve ? fixedPlacements : undefined,
+    });
+
+    if (target.length === 0 && isValidCombinedPlacement(fixedPlacements, data.originalTarget || data.target, data.width, data.height)) {
+      return {
+        result: {
+          status: "ok",
+          message: "배치를 찾았습니다.",
+          placements: fixedPlacements,
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    const innerRequest = {
+      ...data,
+      target,
+      pieceCounts,
+      timeoutMs: packageBudgetMs,
+      candidateBudgetMs: packageBudgetMs,
+      fixedPlacements,
+      originalTarget: data.originalTarget || data.target,
+      iterationOffset: iterationOffset + totalIterations,
+      startTimeOverride: startTime,
+      useCornerPackages: false,
+    };
+
+    const wasmResult = data.requireCenterControl
+      ? await solveWithCenterControl(innerRequest)
+      : shouldUseWasmLiveSolver(innerRequest)
+        ? await solveWithWasmLive(innerRequest)
+        : await solveWithWasm({ ...innerRequest, liveSolve: false });
+
+    const result = wasmResult?.result;
+    totalIterations += result?.iterations || 0;
+
+    if (!result) {
+      continue;
+    }
+
+    if (result.status === "cancelled") {
+      return {
+        result: {
+          ...result,
+          startTime,
+          iterations: totalIterations,
+        },
+      };
+    }
+
+    if (result.status === "timeout" || result.status === "candidate_timeout") {
+      timedOut = Date.now() - startTime >= timeoutMs;
+      if (timedOut) {
+        break;
+      }
+      continue;
+    }
+
+    if (result.status !== "ok") {
+      continue;
+    }
+
+    const placements = data.requireCenterControl
+      ? result.placements
+      : [...fixedPlacements, ...result.placements];
+    if (!isValidCombinedPlacement(placements, data.originalTarget || data.target, data.width, data.height)) {
+      continue;
+    }
+
+    return {
+      result: {
+        status: "ok",
+        message: "배치를 찾았습니다.",
+        placements,
+        startTime,
+        iterations: totalIterations,
+      },
+    };
+  }
+
+  if (timedOut) {
+    return {
+      result: {
+        status: "timeout",
+        message: "타임아웃",
+        placements: [],
+        startTime,
+        iterations: totalIterations,
+      },
+    };
+  }
+
+  return {
+    result: {
+      status: "unsolved",
+      message: "모서리 후보에서 찾지 못했습니다.",
+      placements: [],
+      startTime,
+      iterations: totalIterations,
+    },
+  };
+}
+
+function getCornerPackageBudgetMs(candidateIndex, remainingMs) {
+  const budget = CORNER_PACKAGE_BUDGETS_MS[Math.min(
+    Math.max(0, Math.floor(Number(candidateIndex || 0))),
+    CORNER_PACKAGE_BUDGETS_MS.length - 1,
+  )];
+
+  return Math.max(1, Math.min(Math.max(1, Math.floor(Number(remainingMs || 0))), budget));
+}
+
+function decrementPieceCountsForPlacements(pieceCounts, placements) {
+  const nextCounts = { ...pieceCounts };
+
+  for (const placement of placements) {
+    const current = Math.max(0, Math.floor(Number(nextCounts[placement.pieceId] || 0)));
+    if (current <= 0) {
+      return null;
+    }
+    nextCounts[placement.pieceId] = current - 1;
+  }
+
+  return nextCounts;
 }
 
 function getTotalPieceCellCount(pieceCounts) {
@@ -411,6 +651,478 @@ function canFillComponentSize(componentSize, pieceSizeCounts) {
   }
 
   return false;
+}
+
+function getCornerPackageCandidates(data) {
+  const targetSet = new Set(data.target);
+  const corners = getTargetCornerDefinitions(data.target, data.width, data.height);
+  const candidates = [];
+  const seenPackages = new Set();
+
+  for (const corner of corners) {
+    if (candidates.length >= CORNER_PACKAGE_MAX_CANDIDATES) {
+      break;
+    }
+
+    const placementsByPiece = new Map();
+    PIECE_SHAPES.forEach((piece, pieceIndex) => {
+      if (Math.max(0, Math.floor(Number(data.pieceCounts[piece.pieceId] || 0))) <= 0) {
+        return;
+      }
+
+      const placements = getCornerPlacementsForPiece(data, piece, pieceIndex, corner, targetSet)
+        .sort((left, right) => left.score - right.score)
+        .slice(0, CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE);
+      if (placements.length) {
+        placementsByPiece.set(piece.pieceId, placements);
+      }
+    });
+
+    if (!placementsByPiece.size) {
+      continue;
+    }
+
+    const pieceOrder = PIECE_SHAPES
+      .map((piece, pieceIndex) => ({
+        piece,
+        pieceIndex,
+        count: Math.max(0, Math.floor(Number(data.pieceCounts[piece.pieceId] || 0))),
+        placementCount: placementsByPiece.get(piece.pieceId)?.length || 0,
+      }))
+      .filter((item) => item.count > 0 && item.placementCount > 0)
+      .sort((left, right) => (
+        getCornerPackagePiecePriority(right.piece.pieceId) - getCornerPackagePiecePriority(left.piece.pieceId)
+        || left.placementCount - right.placementCount
+        || right.piece.cells.length - left.piece.cells.length
+        || right.count - left.count
+        || left.pieceIndex - right.pieceIndex
+      ));
+
+    const countsLeft = { ...data.pieceCounts };
+    const priorityRequirement = getCornerPackagePriorityRequirement(data.pieceCounts);
+
+    const cornerCandidates = [];
+    searchCornerPackages({
+      data,
+      corner,
+      pieceOrder,
+      placementsByPiece,
+      countsLeft,
+      selected: [],
+      occupied: new Set(),
+      minOrderIndex: 0,
+      priorityRequirement,
+      cornerCandidates,
+      seenPackages,
+    });
+
+    cornerCandidates
+      .sort(compareCornerPackageCandidates)
+      .slice(0, CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER)
+      .forEach((candidate) => {
+        if (candidates.length < CORNER_PACKAGE_MAX_CANDIDATES) {
+          candidates.push(candidate);
+        }
+      });
+  }
+
+  return candidates.sort(compareCornerPackageCandidates).slice(0, CORNER_PACKAGE_MAX_CANDIDATES);
+}
+
+function searchCornerPackages({
+  data,
+  corner,
+  pieceOrder,
+  placementsByPiece,
+  countsLeft,
+  selected,
+  occupied,
+  minOrderIndex,
+  priorityRequirement,
+  cornerCandidates,
+  seenPackages,
+}) {
+  if (cornerCandidates.length >= CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER * 2) {
+    return;
+  }
+
+  const selectedPriorityPieces = countPriorityCornerPieces(selected);
+  if (selectedPriorityPieces + getRemainingPriorityCornerPieceCount(countsLeft) < priorityRequirement) {
+    return;
+  }
+
+  if (selected.length + getRemainingCornerPieceCount(countsLeft) < CORNER_PACKAGE_MIN_PIECES) {
+    return;
+  }
+
+  if (
+    selected.length >= CORNER_PACKAGE_MIN_PIECES
+    && isGoodCornerPackage(selected, occupied, corner, data, countsLeft, priorityRequirement)
+  ) {
+    const packageKey = getCornerPackageKey(selected);
+    if (!seenPackages.has(packageKey)) {
+      seenPackages.add(packageKey);
+      cornerCandidates.push({
+        placements: selected.map((placement) => ({
+          pieceId: placement.pieceId,
+          pieceIndex: placement.pieceIndex,
+          cells: [...placement.cells],
+        })),
+        cells: [...occupied].sort((left, right) => left - right),
+        cornerId: corner.id,
+        score: scoreCornerPackage(selected, occupied, corner, data),
+      });
+    }
+  }
+
+  if (selected.length >= CORNER_PACKAGE_MAX_PIECES) {
+    return;
+  }
+
+  for (let orderIndex = minOrderIndex; orderIndex < pieceOrder.length; orderIndex += 1) {
+    const { piece } = pieceOrder[orderIndex];
+    const isPriorityPiece = CORNER_PACKAGE_PRIORITY_PIECE_IDS.has(piece.pieceId);
+    if (
+      selectedPriorityPieces < priorityRequirement
+      && !isPriorityPiece
+    ) {
+      continue;
+    }
+    if (priorityRequirement > 0 && selectedPriorityPieces >= priorityRequirement && isPriorityPiece) {
+      continue;
+    }
+    if (Math.max(0, Math.floor(Number(countsLeft[piece.pieceId] || 0))) <= 0) {
+      continue;
+    }
+
+    const placements = placementsByPiece.get(piece.pieceId) || [];
+    const branchLimit = CORNER_PACKAGE_MAX_BRANCH_PLACEMENTS;
+    let branchCount = 0;
+    for (const placement of placements) {
+      if (branchCount >= branchLimit) {
+        break;
+      }
+      if (
+        priorityRequirement > 0
+        && isPriorityPiece
+        && !isPriorityPlacementNearCorner(placement, corner)
+      ) {
+        continue;
+      }
+      if (placement.cells.some((cell) => occupied.has(cell))) {
+        continue;
+      }
+      if (selected.length > 0 && !isAdjacentToOccupied(placement.cells, occupied, data.width)) {
+        continue;
+      }
+
+      branchCount += 1;
+      countsLeft[piece.pieceId] -= 1;
+      const nextOccupied = new Set(occupied);
+      placement.cells.forEach((cell) => nextOccupied.add(cell));
+      selected.push(placement);
+
+      searchCornerPackages({
+        data,
+        corner,
+        pieceOrder,
+        placementsByPiece,
+        countsLeft,
+        selected,
+        occupied: nextOccupied,
+        minOrderIndex: orderIndex,
+        priorityRequirement,
+        cornerCandidates,
+        seenPackages,
+      });
+
+      selected.pop();
+      countsLeft[piece.pieceId] += 1;
+    }
+  }
+}
+
+function getCornerPlacementsForPiece(data, piece, pieceIndex, corner, targetSet) {
+  const placements = [];
+  const seen = new Set();
+
+  getTransformedPieceVariants(piece).forEach((variant) => {
+    const xs = variant.cells.map(([x]) => x);
+    const ys = variant.cells.map(([, y]) => y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const variantWidth = maxX - minX + 1;
+    const variantHeight = maxY - minY + 1;
+    const ranges = getCornerOriginRanges(data.width, data.height, variantWidth, variantHeight, corner);
+
+    for (let originY = ranges.minY; originY <= ranges.maxY; originY += 1) {
+      for (let originX = ranges.minX; originX <= ranges.maxX; originX += 1) {
+        const points = variant.cells.map(([x, y]) => [
+          originX + x - minX,
+          originY + y - minY,
+        ]);
+        if (!points.every(([x, y]) => x >= 0 && x < data.width && y >= 0 && y < data.height)) {
+          continue;
+        }
+
+        const cells = points.map(([x, y]) => toIndex(y, x, data.width)).sort((left, right) => left - right);
+        if (!cells.every((cell) => targetSet.has(cell))) {
+          continue;
+        }
+
+        const key = `${piece.pieceId}:${cells.join(",")}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        placements.push({
+          pieceId: piece.pieceId,
+          pieceIndex,
+          cells,
+          score: scoreCornerPlacement(cells, corner, data.width),
+        });
+      }
+    }
+  });
+
+  return placements;
+}
+
+function getCornerDefinitions(width, height) {
+  return getBoardCornerDefinitions(0, width - 1, 0, height - 1, width, height);
+}
+
+function getTargetCornerDefinitions(target, width, height) {
+  if (!Array.isArray(target) || !target.length) {
+    return getCornerDefinitions(width, height);
+  }
+
+  const points = target.map((cell) => indexToPoint(cell, width));
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return getBoardCornerDefinitions(
+    Math.min(...xs),
+    Math.max(...xs),
+    Math.min(...ys),
+    Math.max(...ys),
+    width,
+    height,
+  );
+}
+
+function getBoardCornerDefinitions(minX, maxX, minY, maxY, width, height) {
+  return [
+    { id: "top-left", edgeX: minX, edgeY: minY, horizontalEdge: "left", verticalEdge: "top", minX, maxX: minX + CORNER_PACKAGE_WINDOW_SIZE - 1, minY, maxY: minY + CORNER_PACKAGE_WINDOW_SIZE - 1 },
+    { id: "top-right", edgeX: maxX, edgeY: minY, horizontalEdge: "right", verticalEdge: "top", minX: maxX - CORNER_PACKAGE_WINDOW_SIZE + 1, maxX, minY, maxY: minY + CORNER_PACKAGE_WINDOW_SIZE - 1 },
+    { id: "bottom-left", edgeX: minX, edgeY: maxY, horizontalEdge: "left", verticalEdge: "bottom", minX, maxX: minX + CORNER_PACKAGE_WINDOW_SIZE - 1, minY: maxY - CORNER_PACKAGE_WINDOW_SIZE + 1, maxY },
+    { id: "bottom-right", edgeX: maxX, edgeY: maxY, horizontalEdge: "right", verticalEdge: "bottom", minX: maxX - CORNER_PACKAGE_WINDOW_SIZE + 1, maxX, minY: maxY - CORNER_PACKAGE_WINDOW_SIZE + 1, maxY },
+  ].map((corner) => ({
+    ...corner,
+    minX: Math.max(0, corner.minX),
+    maxX: Math.min(width - 1, corner.maxX),
+    minY: Math.max(0, corner.minY),
+    maxY: Math.min(height - 1, corner.maxY),
+  }));
+}
+
+function getCornerOriginRanges(width, height, variantWidth, variantHeight, corner) {
+  const minX = Math.max(0, corner.minX);
+  const maxX = Math.min(width - variantWidth, corner.maxX - variantWidth + 1);
+  const minY = Math.max(0, corner.minY);
+  const maxY = Math.min(height - variantHeight, corner.maxY - variantHeight + 1);
+
+  return {
+    minX,
+    maxX: Math.max(minX - 1, maxX),
+    minY,
+    maxY: Math.max(minY - 1, maxY),
+  };
+}
+
+function isGoodCornerPackage(selected, occupied, corner, data, countsLeft, priorityRequirement) {
+  if (countPriorityCornerPieces(selected) < priorityRequirement) {
+    return false;
+  }
+  if (!touchesCornerEdges(occupied, corner, data.width, data.height)) {
+    return false;
+  }
+  if (priorityRequirement > 0 && !hasCornerNearPriorityPiece(selected, corner, data.width)) {
+    return false;
+  }
+  if (!isConnectedCellSet(occupied, data.width)) {
+    return false;
+  }
+
+  const remainingTarget = data.target.filter((cell) => !occupied.has(cell));
+  if (remainingTarget.length !== getTotalPieceCellCount(countsLeft)) {
+    return false;
+  }
+
+  return !hasImpossibleRemainingComponent(remainingTarget, countsLeft, data.width);
+}
+
+function touchesCornerEdges(cells, corner, width, height) {
+  let touchesHorizontal = false;
+  let touchesVertical = false;
+
+  cells.forEach((cell) => {
+    const [x, y] = indexToPoint(cell, width);
+    if (x === corner.edgeX) {
+      touchesHorizontal = true;
+    }
+    if (y === corner.edgeY) {
+      touchesVertical = true;
+    }
+  });
+
+  return touchesHorizontal && touchesVertical;
+}
+
+function isConnectedCellSet(cells, width) {
+  if (!cells.size) {
+    return false;
+  }
+
+  const remaining = new Set(cells);
+  const first = remaining.values().next().value;
+  const stack = [first];
+  remaining.delete(first);
+
+  while (stack.length) {
+    const cell = stack.pop();
+    const col = cell % width;
+    const neighbors = [cell - width, cell + width];
+    if (col > 0) {
+      neighbors.push(cell - 1);
+    }
+    if (col < width - 1) {
+      neighbors.push(cell + 1);
+    }
+
+    neighbors.forEach((neighbor) => {
+      if (remaining.has(neighbor)) {
+        remaining.delete(neighbor);
+        stack.push(neighbor);
+      }
+    });
+  }
+
+  return remaining.size === 0;
+}
+
+function isAdjacentToOccupied(cells, occupied, width) {
+  return cells.some((cell) => {
+    const col = cell % width;
+    return occupied.has(cell - width)
+      || occupied.has(cell + width)
+      || (col > 0 && occupied.has(cell - 1))
+      || (col < width - 1 && occupied.has(cell + 1));
+  });
+}
+
+function scoreCornerPlacement(cells, corner, width) {
+  return cells.reduce((sum, cell) => {
+    const [x, y] = indexToPoint(cell, width);
+    const distanceX = Math.abs(x - corner.edgeX);
+    const distanceY = Math.abs(y - corner.edgeY);
+    return sum + distanceX + distanceY;
+  }, 0);
+}
+
+function isPriorityPlacementNearCorner(placement, corner) {
+  return placement.score <= CORNER_PACKAGE_PRIORITY_MAX_SCORE;
+}
+
+function hasCornerNearPriorityPiece(placements, corner, width) {
+  return placements.some((placement) => (
+    CORNER_PACKAGE_PRIORITY_PIECE_IDS.has(placement.pieceId)
+    && isPriorityPlacementNearCorner(placement, corner)
+    && placement.cells.some((cell) => {
+      const [x, y] = indexToPoint(cell, width);
+      return x === corner.edgeX || y === corner.edgeY;
+    })
+  ));
+}
+
+function scoreCornerPackage(selected, occupied, corner, data) {
+  const points = [...occupied].map((cell) => indexToPoint(cell, data.width));
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const area = (Math.max(...xs) - Math.min(...xs) + 1) * (Math.max(...ys) - Math.min(...ys) + 1);
+  const occupiedCount = occupied.size;
+  const holePenalty = area - occupiedCount;
+  const distancePenalty = scoreCornerPlacement([...occupied], corner, data.width);
+  const fiveCellPieces = selected.filter((placement) => PIECE_SHAPES[placement.pieceIndex].cells.length >= 5).length;
+  const priorityPieces = countPriorityCornerPieces(selected);
+  const supportPieces = countSupportCornerPieces(selected);
+  const packageVariety = new Set(selected.map((placement) => placement.pieceId)).size;
+  const constrainedScore = selected.reduce((sum, placement) => sum + Math.max(0, 10 - placement.score), 0);
+
+  return occupiedCount * 100
+    + selected.length * 12
+    + fiveCellPieces * 16
+    + priorityPieces * 90
+    + supportPieces * 36
+    + packageVariety * 8
+    + constrainedScore
+    - holePenalty * 8
+    - distancePenalty;
+}
+
+function getCornerPackagePriorityRequirement(pieceCounts) {
+  const priorityCount = [...CORNER_PACKAGE_PRIORITY_PIECE_IDS].reduce((sum, pieceId) => (
+    sum + Math.max(0, Math.floor(Number(pieceCounts[pieceId] || 0)))
+  ), 0);
+
+  return priorityCount >= CORNER_PACKAGE_MIN_PRIORITY_PIECES
+    ? CORNER_PACKAGE_MIN_PRIORITY_PIECES
+    : 0;
+}
+
+function countPriorityCornerPieces(placements) {
+  return placements.filter((placement) => CORNER_PACKAGE_PRIORITY_PIECE_IDS.has(placement.pieceId)).length;
+}
+
+function countSupportCornerPieces(placements) {
+  return placements.filter((placement) => CORNER_PACKAGE_SUPPORT_PIECE_IDS.has(placement.pieceId)).length;
+}
+
+function getCornerPackagePiecePriority(pieceId) {
+  if (CORNER_PACKAGE_PRIORITY_PIECE_IDS.has(pieceId)) {
+    return 2;
+  }
+  if (CORNER_PACKAGE_SUPPORT_PIECE_IDS.has(pieceId)) {
+    return 1;
+  }
+  return 0;
+}
+
+function getRemainingPriorityCornerPieceCount(pieceCounts) {
+  return [...CORNER_PACKAGE_PRIORITY_PIECE_IDS].reduce((sum, pieceId) => (
+    sum + Math.max(0, Math.floor(Number(pieceCounts[pieceId] || 0)))
+  ), 0);
+}
+
+function getRemainingCornerPieceCount(pieceCounts) {
+  return Object.values(pieceCounts).reduce((sum, count) => (
+    sum + Math.max(0, Math.floor(Number(count || 0)))
+  ), 0);
+}
+
+function compareCornerPackageCandidates(left, right) {
+  return right.score - left.score
+    || right.cells.length - left.cells.length
+    || left.cornerId.localeCompare(right.cornerId)
+    || getCornerPackageKey(left.placements).localeCompare(getCornerPackageKey(right.placements));
+}
+
+function getCornerPackageKey(placements) {
+  return placements
+    .map((placement) => `${placement.pieceId}:${placement.cells.join(",")}`)
+    .sort()
+    .join("|");
 }
 
 function getCenterControlCandidates(data) {
@@ -559,7 +1271,7 @@ async function solveWithWasmLive(data) {
   let lastProgressIterations = 0;
 
   postProgress({
-    statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
+    statusMessage: data.liveSolve ? "실시간으로 탐색하고 있습니다." : "탐색합니다.",
     startTime,
     iterations: iterationOffset,
     placements: getProgressPlacements(data, []),
@@ -591,7 +1303,7 @@ async function solveWithWasmLive(data) {
         return {
           result: {
             status: "candidate_timeout",
-            message: "중앙 기준점 후보 시간 초과",
+            message: "중앙 후보 시간이 초과되었습니다.",
             placements: getProgressPlacements(data, result.placements),
             startTime,
             iterations: result.iterations,
@@ -604,7 +1316,7 @@ async function solveWithWasmLive(data) {
         && now - lastProgressAt >= 100
       ) {
         postProgress({
-          statusMessage: data.liveSolve ? "실시간 탐색 중" : "탐색 중",
+          statusMessage: data.liveSolve ? "실시간으로 탐색하고 있습니다." : "탐색합니다.",
           startTime,
           iterations: iterationOffset + result.iterations,
           placements: data.liveSolve ? getProgressPlacements(data, result.placements) : undefined,
@@ -648,7 +1360,7 @@ async function solveWithWasmLive(data) {
       return {
         result: {
           status: "candidate_timeout",
-          message: "중앙 기준점 후보 시간 초과",
+          message: "중앙 후보 시간이 초과되었습니다.",
           placements: getProgressPlacements(data, result.placements),
           startTime,
           iterations: result.iterations,
@@ -666,7 +1378,7 @@ async function solveWithWasmLive(data) {
     return {
       result: {
         status: "unsolved",
-        message: "탐색 엔진 실행 중 오류가 발생했습니다.",
+        message: "탐색 엔진 오류가 발생했습니다.",
         placements: [],
         startTime,
         iterations: 0,
@@ -695,7 +1407,7 @@ async function solveWithWasm(data) {
 
   const startTime = Date.now();
   postProgress({
-    statusMessage: "탐색 중",
+    statusMessage: "탐색합니다.",
     startTime,
     iterations: 0,
   });
@@ -735,7 +1447,7 @@ async function solveWithWasm(data) {
     return {
       result: {
         status: "unsolved",
-        message: "탐색 엔진 실행 중 오류가 발생했습니다.",
+        message: "탐색 엔진 오류가 발생했습니다.",
         placements: [],
         startTime,
         iterations: 0,

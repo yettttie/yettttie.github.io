@@ -11,11 +11,19 @@
   <meta property="og:image" content="../_astro/main_logo.vngKxTZF.png">
   <link rel="icon" href="../favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="../fonts/fonts.css">
-  <link rel="stylesheet" href="./style.css">
-  <script defer src="./app.js?v=20260418-center-candidate-slicing-6"></script>
+  <link rel="stylesheet" href="./style.css?v=20260419-corner-packages-39">
+  <script defer src="./app.js?v=20260419-corner-packages-39"></script>
   <title>메이플 유니온 테트리스 실험실</title>
 </head>
 <body>
+  <div id="corner-package-alert" class="solver-alert" role="status" aria-live="polite" hidden>
+    <button id="corner-package-dismiss-button" class="solver-alert-close" type="button" aria-label="알림 닫기">×</button>
+    <div class="solver-alert-copy">
+      <strong id="corner-package-alert-title">실험적 기능 추천</strong>
+      <span id="corner-package-alert-message">이 배치는 탐색 시간이 길어질 수 있습니다.<br>법사 우선 배치 옵션을 활성화해 보세요.</span>
+    </div>
+    <button id="corner-package-enable-button" class="solver-alert-button" type="button">다음 탐색부터 켜기</button>
+  </div>
   <div class="page-shell">
     <header class="topbar">
       <div class="title-block">
@@ -25,6 +33,10 @@
         </a>
         <h1>메이플 유니온 테트리스</h1>
       </div>
+      <label class="toggle-field theme-toggle">
+        <span id="theme-toggle-label">라이트 모드</span>
+        <input id="theme-toggle-input" type="checkbox" aria-label="다크 모드 전환">
+      </label>
     </header>
 
     <main class="tool-shell">
@@ -45,6 +57,14 @@
                 <option value="heuristic_pruned">강화 탐색 (휴리스틱 + 백트래킹 + 가지치기)</option>
                 <option value="heuristic_late_prune">후반 강화 탐색 (후반 가지치기)</option>
               </select>
+            </label>
+            <label class="toggle-field experiment-toggle">
+              <input id="corner-package-input" type="checkbox" aria-describedby="corner-package-help">
+              <span>실험적 기능 : 법사 우선 배치</span>
+              <span id="corner-package-help" class="experiment-popover" role="tooltip">
+                250 법사 블럭이 4개 이상일 때 유용합니다.<br>
+                일반 배치에서 20초 이내 결과가 나오지 않으면 켜보세요.
+              </span>
             </label>
           </div>
           <div class="action-row">
@@ -88,6 +108,13 @@
 
           <div class="board-frame">
             <div id="board-grid" class="board-grid" aria-label="유니온 보드"></div>
+          </div>
+          <div class="board-slot-row" role="tablist" aria-label="저장된 보드">
+            <button class="board-slot-button active" type="button" data-board-slot="0" role="tab" aria-selected="true">1</button>
+            <button class="board-slot-button" type="button" data-board-slot="1" role="tab" aria-selected="false">2</button>
+            <button class="board-slot-button" type="button" data-board-slot="2" role="tab" aria-selected="false">3</button>
+            <button class="board-slot-button" type="button" data-board-slot="3" role="tab" aria-selected="false">4</button>
+            <button class="board-slot-button" type="button" data-board-slot="4" role="tab" aria-selected="false">5</button>
           </div>
         </section>
 
