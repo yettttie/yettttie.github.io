@@ -16,7 +16,7 @@ const PIECE_SHAPES = [
   controlCells: getCellsFromShape(piece.shape, 2),
 }));
 
-const ASSET_VERSION = "20260420-corner-branch-preview";
+const ASSET_VERSION = "20260420-live-preview-only";
 const CENTER_CANDIDATE_BUDGETS_MS = [30000, 60000, 120000];
 const CORNER_PACKAGE_PREFLIGHT_MS = 200;
 const CORNER_PACKAGE_MIN_PIECES = 4;
@@ -465,8 +465,7 @@ async function solveWithCornerPackages(data) {
       statusMessage,
       startTime,
       iterations: iterationOffset + candidateSearchIterations,
-      placements: data.liveSolve || data.cornerPreview ? [...baseFixedPlacements, ...(placements || [])] : undefined,
-      previewPlacements: Boolean(data.cornerPreview),
+      placements: data.liveSolve ? [...baseFixedPlacements, ...(placements || [])] : undefined,
     });
   });
   if (cancelled) {
@@ -790,7 +789,7 @@ async function getCornerPackageCandidates(data, progressCallback = null) {
 
       const placements = getCornerPlacementsForPiece(data, piece, pieceIndex, corner, targetSet)
         .sort((left, right) => left.score - right.score)
-      .slice(0, CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE);
+        .slice(0, CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE);
       if (placements.length) {
         placementsByPiece.set(piece.pieceId, placements);
         emitProgress(
@@ -1020,6 +1019,12 @@ async function searchCornerPackages({
       countsLeft[piece.pieceId] -= 1;
       const nextOccupied = new Set(occupied);
       placement.cells.forEach((cell) => nextOccupied.add(cell));
+      if (hasImpossibleCornerRemainder(data, nextOccupied, countsLeft)) {
+        countsLeft[piece.pieceId] += 1;
+        await emitProgress.yieldIfNeeded();
+        continue;
+      }
+
       selected.push(placement);
       emitProgress(
         `${progressLabel}, ${selected.length}개 조합 탐색`,
@@ -1048,6 +1053,27 @@ async function searchCornerPackages({
       countsLeft[piece.pieceId] += 1;
     }
   }
+}
+
+function hasImpossibleCornerRemainder(data, occupied, countsLeft) {
+  const remainingTarget = data.target.filter((cell) => !occupied.has(cell));
+  if (remainingTarget.length !== getTotalPieceCellCount(countsLeft)) {
+    return true;
+  }
+
+  if (hasImpossibleRemainingComponent(remainingTarget, countsLeft, data.width)) {
+    return true;
+  }
+
+  if (!data.requireCenterControl || remainingTarget.length === 0) {
+    return false;
+  }
+
+  return !getCenterControlCandidates({
+    ...data,
+    target: remainingTarget,
+    pieceCounts: countsLeft,
+  }).length;
 }
 
 function serializeCornerPreviewPlacements(placements) {
@@ -1871,14 +1897,13 @@ function getProgressPlacements(data, placements = []) {
   return [...fixedPlacements, ...placements];
 }
 
-function postProgress({ statusMessage, startTime, iterations, placements, previewPlacements = false }) {
+function postProgress({ statusMessage, startTime, iterations, placements }) {
   self.postMessage({
     type: "progress",
     statusMessage,
     elapsedMs: Date.now() - startTime,
     iterations,
     placements,
-    previewPlacements,
   });
 }
 

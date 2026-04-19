@@ -1,7 +1,7 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
 const BOARD_SLOT_COUNT = 5;
-const ASSET_VERSION = "20260420-corner-branch-preview";
+const ASSET_VERSION = "20260420-live-preview-only";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const THEME_STORAGE_KEY = "yettttie-union-solver-theme";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
@@ -1245,7 +1245,6 @@ function startSolve() {
     pieceCounts,
     timeoutMs: Math.max(1, Number(timeoutInput.value || 120)) * 1000,
     liveSolve: liveSolveEnabled,
-    cornerPreview: cornerPackageEnabled,
     solverMode,
     requireCenterControl: true,
     useCornerPackages: cornerPackageEnabled,
@@ -1304,7 +1303,7 @@ function handleWorkerMessage(event) {
     elapsedTimeElement.textContent = formatMs(data.elapsedMs);
     iterationCountElement.textContent = formatNumber(latestIterationCount);
 
-    if ((liveSolveEnabled || data.previewPlacements) && Array.isArray(data.placements)) {
+    if (liveSolveEnabled && Array.isArray(data.placements)) {
       applySolution(data.placements, { save: false });
     }
     return;
