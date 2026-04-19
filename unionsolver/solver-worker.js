@@ -16,7 +16,7 @@ const PIECE_SHAPES = [
   controlCells: getCellsFromShape(piece.shape, 2),
 }));
 
-const ASSET_VERSION = "20260419-corner-packages-41";
+const ASSET_VERSION = "20260420-corner-branch-preview";
 const CENTER_CANDIDATE_BUDGETS_MS = [30000, 60000, 120000];
 const CORNER_PACKAGE_PREFLIGHT_MS = 200;
 const CORNER_PACKAGE_MIN_PIECES = 4;
@@ -29,6 +29,7 @@ const CORNER_PACKAGE_MAX_BRANCH_PLACEMENTS = 12;
 const CORNER_PACKAGE_BUDGETS_MS = [30000, 60000, 90000];
 const CORNER_PACKAGE_MIN_PRIORITY_PIECES = 2;
 const CORNER_PACKAGE_PRIORITY_MAX_SCORE = 45;
+const CORNER_PACKAGE_PROGRESS_INTERVAL_MS = 120;
 const CORNER_PACKAGE_PRIORITY_PIECE_IDS = new Set([
   "lv250_magician",
   "lv250_thief",
@@ -449,7 +450,37 @@ async function solveWithCornerPackages(data) {
   const iterationOffset = Math.max(0, Math.floor(Number(data.iterationOffset || 0)));
   const baseFixedPlacements = Array.isArray(data.fixedPlacements) ? data.fixedPlacements : [];
   const timeoutMs = Math.max(1, Math.floor(Number(data.timeoutMs || 0)));
-  const candidates = getCornerPackageCandidates(data);
+
+  postProgress({
+    statusMessage: "모서리 후보를 준비합니다.",
+    startTime,
+    iterations: iterationOffset,
+    placements: data.liveSolve ? baseFixedPlacements : undefined,
+  });
+
+  let candidateSearchIterations = 0;
+  const candidates = await getCornerPackageCandidates(data, ({ statusMessage, placements, iterations }) => {
+    candidateSearchIterations = Math.max(candidateSearchIterations, Math.max(0, Math.floor(Number(iterations || 0))));
+    postProgress({
+      statusMessage,
+      startTime,
+      iterations: iterationOffset + candidateSearchIterations,
+      placements: data.liveSolve || data.cornerPreview ? [...baseFixedPlacements, ...(placements || [])] : undefined,
+      previewPlacements: Boolean(data.cornerPreview),
+    });
+  });
+  if (cancelled) {
+    return {
+      result: {
+        status: "cancelled",
+        message: "중지됨",
+        placements: [],
+        startTime,
+        iterations: candidateSearchIterations,
+      },
+    };
+  }
+
   if (!candidates.length) {
     return {
       result: {
@@ -465,11 +496,11 @@ async function solveWithCornerPackages(data) {
   postProgress({
     statusMessage: `모서리 후보 ${candidates.length}개를 찾았습니다.`,
     startTime,
-    iterations: iterationOffset,
+    iterations: iterationOffset + candidateSearchIterations,
     placements: data.liveSolve ? baseFixedPlacements : undefined,
   });
 
-  let totalIterations = 0;
+  let totalIterations = candidateSearchIterations;
   let timedOut = false;
 
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
@@ -723,30 +754,52 @@ function canFillComponentSize(componentSize, pieceSizeCounts) {
   return false;
 }
 
-function getCornerPackageCandidates(data) {
+async function getCornerPackageCandidates(data, progressCallback = null) {
   const targetSet = new Set(data.target);
   const corners = getTargetCornerDefinitions(data.target, data.width, data.height);
   const candidates = [];
   const seenPackages = new Set();
+  const emitProgress = createCornerPackageProgressEmitter(progressCallback);
 
-  for (const corner of corners) {
+  emitProgress(`모서리 후보를 준비합니다. (0/${corners.length})`, [], true);
+  await emitProgress.yieldIfNeeded(true);
+
+  for (let cornerIndex = 0; cornerIndex < corners.length; cornerIndex += 1) {
+    if (cancelled) {
+      break;
+    }
+
+    const corner = corners[cornerIndex];
     if (candidates.length >= CORNER_PACKAGE_MAX_CANDIDATES) {
       break;
     }
 
+    emitProgress(`모서리 후보를 준비합니다. (${cornerIndex + 1}/${corners.length})`, [], true);
+    await emitProgress.yieldIfNeeded(true);
+
     const placementsByPiece = new Map();
-    PIECE_SHAPES.forEach((piece, pieceIndex) => {
+    for (let pieceIndex = 0; pieceIndex < PIECE_SHAPES.length; pieceIndex += 1) {
+      if (cancelled) {
+        break;
+      }
+
+      const piece = PIECE_SHAPES[pieceIndex];
       if (Math.max(0, Math.floor(Number(data.pieceCounts[piece.pieceId] || 0))) <= 0) {
-        return;
+        continue;
       }
 
       const placements = getCornerPlacementsForPiece(data, piece, pieceIndex, corner, targetSet)
         .sort((left, right) => left.score - right.score)
-        .slice(0, CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE);
+      .slice(0, CORNER_PACKAGE_MAX_PLACEMENTS_PER_TYPE);
       if (placements.length) {
         placementsByPiece.set(piece.pieceId, placements);
+        emitProgress(
+          `모서리 배치 후보 계산 중. (${cornerIndex + 1}/${corners.length}, ${placementsByPiece.size}종)`,
+          [],
+        );
       }
-    });
+      await emitProgress.yieldIfNeeded();
+    }
 
     if (!placementsByPiece.size) {
       continue;
@@ -772,7 +825,7 @@ function getCornerPackageCandidates(data) {
     const priorityRequirement = getCornerPackagePriorityRequirement(data.pieceCounts);
 
     const cornerCandidates = [];
-    searchCornerPackages({
+    await searchCornerPackages({
       data,
       corner,
       pieceOrder,
@@ -781,25 +834,91 @@ function getCornerPackageCandidates(data) {
       selected: [],
       occupied: new Set(),
       minOrderIndex: 0,
+      progressLabel: `모서리 후보 조합 중. (${cornerIndex + 1}/${corners.length})`,
       priorityRequirement,
       cornerCandidates,
       seenPackages,
+      onCandidate: (candidate) => {
+        emitProgress(
+          `모서리 후보 조합 중. (${cornerIndex + 1}/${corners.length}, ${cornerCandidates.length}개)`,
+          candidate.placements,
+        );
+      },
+      emitProgress,
     });
 
-    cornerCandidates
+    const selectedCornerCandidates = cornerCandidates
       .sort(compareCornerPackageCandidates)
-      .slice(0, CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER)
-      .forEach((candidate) => {
-        if (candidates.length < CORNER_PACKAGE_MAX_CANDIDATES) {
-          candidates.push(candidate);
-        }
-      });
+      .slice(0, CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER);
+
+    for (const candidate of selectedCornerCandidates) {
+      if (candidates.length < CORNER_PACKAGE_MAX_CANDIDATES) {
+        candidates.push(candidate);
+        emitProgress(
+          `모서리 후보 수집 중. (${candidates.length}/${CORNER_PACKAGE_MAX_CANDIDATES})`,
+          candidate.placements,
+        );
+        await emitProgress.yieldIfNeeded();
+      }
+    }
   }
 
   return candidates.sort(compareCornerPackageCandidates).slice(0, CORNER_PACKAGE_MAX_CANDIDATES);
 }
 
-function searchCornerPackages({
+function createCornerPackageProgressEmitter(progressCallback) {
+  let lastProgressAt = 0;
+  let lastYieldAt = 0;
+  let workUnits = 0;
+  let pendingProgress = null;
+  let lastProgress = null;
+
+  const emitProgress = (statusMessage, placements = [], force = false) => {
+    if (!progressCallback) {
+      return;
+    }
+
+    pendingProgress = { statusMessage, placements };
+    lastProgress = pendingProgress;
+    const now = Date.now();
+    if (!force && now - lastProgressAt < CORNER_PACKAGE_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+
+    emitProgress.flush();
+  };
+
+  emitProgress.flush = () => {
+    if (!progressCallback || (!pendingProgress && !lastProgress)) {
+      return;
+    }
+
+    const progress = pendingProgress || lastProgress;
+    lastProgressAt = Date.now();
+    progressCallback({
+      statusMessage: progress.statusMessage,
+      placements: progress.placements,
+      iterations: workUnits,
+    });
+    pendingProgress = null;
+  };
+
+  emitProgress.yieldIfNeeded = async (force = false) => {
+    workUnits += 1;
+    const now = Date.now();
+    if (!force && now - lastYieldAt < CORNER_PACKAGE_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+
+    lastYieldAt = now;
+    emitProgress.flush();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  return emitProgress;
+}
+
+async function searchCornerPackages({
   data,
   corner,
   pieceOrder,
@@ -808,10 +927,18 @@ function searchCornerPackages({
   selected,
   occupied,
   minOrderIndex,
+  progressLabel,
   priorityRequirement,
   cornerCandidates,
   seenPackages,
+  onCandidate,
+  emitProgress,
 }) {
+  await emitProgress.yieldIfNeeded();
+  if (cancelled) {
+    return;
+  }
+
   if (cornerCandidates.length >= CORNER_PACKAGE_MAX_CANDIDATES_PER_CORNER * 2) {
     return;
   }
@@ -842,6 +969,9 @@ function searchCornerPackages({
         cornerId: corner.id,
         score: scoreCornerPackage(selected, occupied, corner, data),
       });
+      if (onCandidate) {
+        onCandidate(cornerCandidates[cornerCandidates.length - 1]);
+      }
     }
   }
 
@@ -891,8 +1021,13 @@ function searchCornerPackages({
       const nextOccupied = new Set(occupied);
       placement.cells.forEach((cell) => nextOccupied.add(cell));
       selected.push(placement);
+      emitProgress(
+        `${progressLabel}, ${selected.length}개 조합 탐색`,
+        serializeCornerPreviewPlacements(selected),
+      );
+      await emitProgress.yieldIfNeeded();
 
-      searchCornerPackages({
+      await searchCornerPackages({
         data,
         corner,
         pieceOrder,
@@ -901,15 +1036,26 @@ function searchCornerPackages({
         selected,
         occupied: nextOccupied,
         minOrderIndex: orderIndex,
+        progressLabel,
         priorityRequirement,
         cornerCandidates,
         seenPackages,
+        onCandidate,
+        emitProgress,
       });
 
       selected.pop();
       countsLeft[piece.pieceId] += 1;
     }
   }
+}
+
+function serializeCornerPreviewPlacements(placements) {
+  return placements.map((placement) => ({
+    pieceId: placement.pieceId,
+    pieceIndex: placement.pieceIndex,
+    cells: [...placement.cells],
+  }));
 }
 
 function getCornerPlacementsForPiece(data, piece, pieceIndex, corner, targetSet) {
@@ -1725,13 +1871,14 @@ function getProgressPlacements(data, placements = []) {
   return [...fixedPlacements, ...placements];
 }
 
-function postProgress({ statusMessage, startTime, iterations, placements }) {
+function postProgress({ statusMessage, startTime, iterations, placements, previewPlacements = false }) {
   self.postMessage({
     type: "progress",
     statusMessage,
     elapsedMs: Date.now() - startTime,
     iterations,
     placements,
+    previewPlacements,
   });
 }
 

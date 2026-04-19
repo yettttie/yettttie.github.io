@@ -1,7 +1,7 @@
 const BOARD_WIDTH = 22;
 const BOARD_HEIGHT = 20;
 const BOARD_SLOT_COUNT = 5;
-const ASSET_VERSION = "20260419-corner-packages-41";
+const ASSET_VERSION = "20260420-corner-branch-preview";
 const STORAGE_KEY = "yettttie-union-solver-v2";
 const THEME_STORAGE_KEY = "yettttie-union-solver-theme";
 const NEXON_API_KEY_STORAGE_KEY = "yettttie-nexon-api-key";
@@ -46,8 +46,12 @@ const boardStates = Array.from(
   { length: BOARD_SLOT_COUNT },
   () => new Array(BOARD_WIDTH * BOARD_HEIGHT).fill(false),
 );
+const boardSolutionPlacements = Array.from({ length: BOARD_SLOT_COUNT }, () => null);
+const boardPieceCounts = Array.from({ length: BOARD_SLOT_COUNT }, () => createEmptyPieceCounts());
+const boardPieceControlIconQueues = Array.from({ length: BOARD_SLOT_COUNT }, () => new Map());
 let activeBoardIndex = 0;
 let boardState = boardStates[activeBoardIndex];
+let pieceControlIconQueues = boardPieceControlIconQueues[activeBoardIndex];
 const boardCells = [];
 const pieceInputs = new Map();
 const solutionMap = new Map();
@@ -74,8 +78,10 @@ let nexonHighestCharacter = null;
 let nexonUnionClassTypes = new Map();
 let nexonMapleMCount = 0;
 let nexonExcludedBelowLevelCount = 0;
-let pieceControlIconQueues = new Map();
 let cornerPackageHintTimer = null;
+let solveUiTimer = null;
+let solveStartedAt = 0;
+let latestIterationCount = 0;
 let cornerPackageAlertDismissed = false;
 let cornerPackageAlertReason = "";
 let magicianRecommendationDismissed = false;
@@ -228,6 +234,7 @@ function renderPieceInputs() {
     input.value = "0";
     input.addEventListener("input", () => {
       pieceControlIconQueues.clear();
+      syncActivePieceCountsFromInputs();
       clearSolution();
       updateStats();
       updateMagicianRecommendation();
@@ -383,10 +390,13 @@ function switchBoardSlot(index) {
     return;
   }
 
+  syncActivePieceCountsFromInputs();
   activeBoardIndex = nextIndex;
   boardState = boardStates[activeBoardIndex];
+  pieceControlIconQueues = boardPieceControlIconQueues[activeBoardIndex];
+  renderPieceCounts();
   hoveredRegion = -1;
-  clearSolution();
+  renderStoredSolution();
   paintBoard();
   updateStats();
   updateBoardSlotButtons();
@@ -406,9 +416,8 @@ function updateBoardSlotButtons() {
 
 function clearPieces() {
   pieceControlIconQueues.clear();
-  pieceInputs.forEach((input) => {
-    input.value = "0";
-  });
+  boardPieceCounts[activeBoardIndex] = createEmptyPieceCounts();
+  renderPieceCounts();
 
   clearSolution();
   updateStats();
@@ -752,10 +761,10 @@ function applyNexonSelection() {
     nextIconQueues.get(pieceId).push(getControlIconForCandidate(candidate, pieceId));
   });
 
-  pieceControlIconQueues = nextIconQueues;
-  Object.entries(counts).forEach(([pieceId, count]) => {
-    pieceInputs.get(pieceId).value = String(count);
-  });
+  boardPieceCounts[activeBoardIndex] = normalizePieceCounts(counts);
+  boardPieceControlIconQueues[activeBoardIndex] = nextIconQueues;
+  pieceControlIconQueues = boardPieceControlIconQueues[activeBoardIndex];
+  renderPieceCounts();
 
   clearSolution();
   updateStats();
@@ -1033,12 +1042,46 @@ function getNexonLoadedStatus() {
   return "캐릭터 목록을 불러왔습니다.";
 }
 
-function getPieceCounts() {
+function createEmptyPieceCounts() {
+  const counts = {};
+  PIECES.forEach((piece) => {
+    counts[piece.id] = 0;
+  });
+  return counts;
+}
+
+function normalizePieceCounts(pieceCounts) {
+  const counts = createEmptyPieceCounts();
+  Object.entries(pieceCounts || {}).forEach(([pieceId, count]) => {
+    if (Object.prototype.hasOwnProperty.call(counts, pieceId)) {
+      counts[pieceId] = Math.max(0, Math.floor(Number(count || 0)));
+    }
+  });
+  return counts;
+}
+
+function getPieceCountsFromInputs() {
   const counts = {};
   PIECES.forEach((piece) => {
     counts[piece.id] = Math.max(0, Math.floor(Number(pieceInputs.get(piece.id).value || 0)));
   });
   return counts;
+}
+
+function syncActivePieceCountsFromInputs() {
+  boardPieceCounts[activeBoardIndex] = getPieceCountsFromInputs();
+}
+
+function renderPieceCounts() {
+  const counts = normalizePieceCounts(boardPieceCounts[activeBoardIndex]);
+  boardPieceCounts[activeBoardIndex] = counts;
+  PIECES.forEach((piece) => {
+    pieceInputs.get(piece.id).value = String(counts[piece.id]);
+  });
+}
+
+function getPieceCounts() {
+  return normalizePieceCounts(boardPieceCounts[activeBoardIndex]);
 }
 
 function updateStats() {
@@ -1092,6 +1135,7 @@ function getCompactStatus(text) {
     ["먼저 일반 탐색을 시도합니다.", "일반 탐색"],
     ["탐색합니다.", "탐색"],
     ["중앙 기준점을 탐색합니다.", "중앙 기준점 탐색"],
+    ["모서리 후보를 준비합니다.", "모서리 준비"],
     ["배치를 찾았습니다.", "배치 완료"],
     ["시간 안에 찾지 못했습니다.", "시간 초과"],
     ["탐색이 중지되었습니다.", "탐색 중지"],
@@ -1125,6 +1169,26 @@ function getCompactStatus(text) {
     return `모서리 후보 ${cornerFoundMatch[1]}개`;
   }
 
+  const cornerPrepareMatch = value.match(/^모서리 후보를 준비합니다\. \(([^)]+)\)$/);
+  if (cornerPrepareMatch) {
+    return `모서리 준비 ${cornerPrepareMatch[1]}`;
+  }
+
+  const cornerPlacementMatch = value.match(/^모서리 배치 후보 계산 중\. \(([^)]+)\)$/);
+  if (cornerPlacementMatch) {
+    return `모서리 배치 ${cornerPlacementMatch[1]}`;
+  }
+
+  const cornerComposeMatch = value.match(/^모서리 후보 (조합|수집) 중\. \(([^)]+)\)$/);
+  if (cornerComposeMatch) {
+    return `모서리 ${cornerComposeMatch[1]} ${cornerComposeMatch[2]}`;
+  }
+
+  const cornerBranchMatch = value.match(/^모서리 후보 조합 중\. \(([^)]+)\), (\d+)개 조합 탐색$/);
+  if (cornerBranchMatch) {
+    return `모서리 조합 ${cornerBranchMatch[1]} ${cornerBranchMatch[2]}개`;
+  }
+
   const cornerSearchMatch = value.match(/^모서리 후보를 탐색합니다\. \(([^)]+)\)$/);
   if (cornerSearchMatch) {
     return `모서리 후보 ${cornerSearchMatch[1]}`;
@@ -1134,6 +1198,7 @@ function getCompactStatus(text) {
 }
 
 function startSolve() {
+  syncActivePieceCountsFromInputs();
   const target = boardState.map((value, index) => (value ? index : -1)).filter((value) => value !== -1);
   const pieceCounts = getPieceCounts();
   const totalPieceCells = PIECES.reduce((sum, piece) => sum + piece.cells.length * pieceCounts[piece.id], 0);
@@ -1150,7 +1215,7 @@ function startSolve() {
     return;
   }
 
-  clearSolution();
+  clearSolution({ clearSaved: false });
   createWorker();
   solving = true;
   solveButton.disabled = true;
@@ -1159,6 +1224,7 @@ function startSolve() {
   setStatus("탐색 중");
   elapsedTimeElement.textContent = "0.00s";
   iterationCountElement.textContent = "0";
+  startSolveUiTimer();
   setBoardCaption(cornerPackageEnabled
     ? "남은 영역을 탐색합니다."
     : liveSolveEnabled
@@ -1179,6 +1245,7 @@ function startSolve() {
     pieceCounts,
     timeoutMs: Math.max(1, Number(timeoutInput.value || 120)) * 1000,
     liveSolve: liveSolveEnabled,
+    cornerPreview: cornerPackageEnabled,
     solverMode,
     requireCenterControl: true,
     useCornerPackages: cornerPackageEnabled,
@@ -1190,6 +1257,30 @@ function stopSolve() {
   if (worker) {
     worker.postMessage({ type: "stop" });
   }
+}
+
+function startSolveUiTimer() {
+  stopSolveUiTimer();
+  solveStartedAt = performance.now();
+  latestIterationCount = 0;
+  solveUiTimer = window.setInterval(updateSolveUiTimer, 100);
+  updateSolveUiTimer();
+}
+
+function stopSolveUiTimer() {
+  if (solveUiTimer !== null) {
+    window.clearInterval(solveUiTimer);
+    solveUiTimer = null;
+  }
+}
+
+function updateSolveUiTimer() {
+  if (!solving || !solveStartedAt) {
+    return;
+  }
+
+  elapsedTimeElement.textContent = formatMs(performance.now() - solveStartedAt);
+  iterationCountElement.textContent = formatNumber(latestIterationCount);
 }
 
 function createWorker() {
@@ -1209,16 +1300,18 @@ function handleWorkerMessage(event) {
     if (data.statusMessage) {
       setBoardCaption(data.statusMessage);
     }
+    latestIterationCount = Math.max(latestIterationCount, Math.max(0, Math.floor(Number(data.iterations || 0))));
     elapsedTimeElement.textContent = formatMs(data.elapsedMs);
-    iterationCountElement.textContent = formatNumber(data.iterations);
+    iterationCountElement.textContent = formatNumber(latestIterationCount);
 
-    if (liveSolveEnabled && Array.isArray(data.placements)) {
-      applySolution(data.placements);
+    if ((liveSolveEnabled || data.previewPlacements) && Array.isArray(data.placements)) {
+      applySolution(data.placements, { save: false });
     }
     return;
   }
 
   solving = false;
+  stopSolveUiTimer();
   clearCornerPackageHintTimer();
   hideCornerPackageAlert();
   solveButton.disabled = false;
@@ -1226,19 +1319,19 @@ function handleWorkerMessage(event) {
   updateBoardSlotButtons();
 
   if (data.status === "ok") {
-    applySolution(data.placements);
+    applySolution(data.placements, { save: true });
     setStatus("완료");
     setBoardCaption(data.message || "배치를 찾았습니다.");
   } else if (data.status === "timeout") {
-    clearSolution();
+    renderStoredSolution();
     setStatus("타임아웃");
     setBoardCaption("시간 안에 찾지 못했습니다.");
   } else if (data.status === "cancelled") {
-    clearSolution();
+    renderStoredSolution();
     setStatus("중지됨");
     setBoardCaption("탐색이 중지되었습니다.");
   } else {
-    clearSolution();
+    renderStoredSolution();
     setStatus(data.message || "해 없음");
     setBoardCaption(data.message || "현재 설정으로는 배치를 찾지 못했습니다.");
   }
@@ -1325,11 +1418,16 @@ function setCornerPackageAlertContent(reason, magicianCount = 0) {
   );
 }
 
-function applySolution(placements) {
+function applySolution(placements, options = {}) {
+  const normalizedPlacements = normalizeSolutionPlacements(placements);
+  if (options.save) {
+    boardSolutionPlacements[activeBoardIndex] = normalizedPlacements;
+  }
+
   solutionMap.clear();
   const iconQueues = buildPlacementIconQueues();
 
-  placements.forEach((placement, placementIndex) => {
+  normalizedPlacements.forEach((placement, placementIndex) => {
     const piece = PIECES.find((item) => item.id === placement.pieceId);
     if (!piece) {
       return;
@@ -1351,11 +1449,53 @@ function applySolution(placements) {
   });
 
   paintBoard();
+  if (options.save) {
+    persistState();
+  }
 }
 
-function clearSolution() {
+function renderStoredSolution() {
+  applySolution(boardSolutionPlacements[activeBoardIndex], { save: false });
+}
+
+function clearSolution(options = {}) {
+  const shouldClearSaved = options.clearSaved !== false;
+  if (shouldClearSaved) {
+    boardSolutionPlacements[activeBoardIndex] = null;
+  }
   solutionMap.clear();
   paintBoard();
+}
+
+function normalizeSolutionPlacements(placements) {
+  if (!Array.isArray(placements)) {
+    return [];
+  }
+
+  return placements
+    .map((placement) => {
+      const pieceId = typeof placement?.pieceId === "string" ? placement.pieceId : "";
+      const cells = Array.isArray(placement?.cells)
+        ? placement.cells
+          .map((index) => Math.floor(Number(index)))
+          .filter((index) => Number.isInteger(index) && index >= 0 && index < BOARD_WIDTH * BOARD_HEIGHT)
+          .sort((left, right) => left - right)
+        : [];
+
+      if (!pieceId || !cells.length) {
+        return null;
+      }
+
+      const normalized = { pieceId, cells };
+      if (placement.centerIndex !== undefined && placement.centerIndex !== null) {
+        const centerIndex = Math.floor(Number(placement.centerIndex));
+        if (Number.isInteger(centerIndex) && centerIndex >= 0 && centerIndex < BOARD_WIDTH * BOARD_HEIGHT) {
+          normalized.centerIndex = centerIndex;
+        }
+      }
+      return normalized;
+    })
+    .filter(Boolean);
 }
 
 function getSingleControlIndexForPlacement(piece, cells) {
@@ -1370,6 +1510,26 @@ function buildPlacementIconQueues() {
   const iconQueues = new Map();
   pieceControlIconQueues.forEach((icons, pieceId) => {
     iconQueues.set(pieceId, [...icons]);
+  });
+  return iconQueues;
+}
+
+function serializePieceControlIconQueues(iconQueues) {
+  const serialized = {};
+  iconQueues.forEach((icons, pieceId) => {
+    if (Array.isArray(icons) && icons.length) {
+      serialized[pieceId] = [...icons];
+    }
+  });
+  return serialized;
+}
+
+function deserializePieceControlIconQueues(value) {
+  const iconQueues = new Map();
+  Object.entries(value || {}).forEach(([pieceId, icons]) => {
+    if (Array.isArray(icons) && PIECES.some((piece) => piece.id === pieceId)) {
+      iconQueues.set(pieceId, icons.filter((icon) => typeof icon === "string"));
+    }
   });
   return iconQueues;
 }
@@ -1430,6 +1590,9 @@ function persistState() {
     JSON.stringify({
       boardState,
       boardStates,
+      boardSolutionPlacements,
+      boardPieceCounts,
+      boardPieceControlIconQueues: boardPieceControlIconQueues.map(serializePieceControlIconQueues),
       activeBoardIndex,
       pieceCounts: getPieceCounts(),
       timeout: timeoutInput.value,
@@ -1466,11 +1629,26 @@ function restoreState() {
       boardStates[0] = parsed.boardState.map(Boolean);
     }
 
-    if (parsed.pieceCounts) {
-      Object.entries(parsed.pieceCounts).forEach(([pieceId, count]) => {
-        if (pieceInputs.has(pieceId)) {
-          pieceInputs.get(pieceId).value = String(count);
-        }
+    if (Array.isArray(parsed.boardSolutionPlacements)) {
+      parsed.boardSolutionPlacements.slice(0, BOARD_SLOT_COUNT).forEach((storedPlacements, slotIndex) => {
+        boardSolutionPlacements[slotIndex] = normalizeSolutionPlacements(storedPlacements);
+      });
+    }
+
+    if (Array.isArray(parsed.boardPieceCounts)) {
+      parsed.boardPieceCounts.slice(0, BOARD_SLOT_COUNT).forEach((storedCounts, slotIndex) => {
+        boardPieceCounts[slotIndex] = normalizePieceCounts(storedCounts);
+      });
+    } else if (parsed.pieceCounts) {
+      const legacyCounts = normalizePieceCounts(parsed.pieceCounts);
+      for (let slotIndex = 0; slotIndex < BOARD_SLOT_COUNT; slotIndex += 1) {
+        boardPieceCounts[slotIndex] = { ...legacyCounts };
+      }
+    }
+
+    if (Array.isArray(parsed.boardPieceControlIconQueues)) {
+      parsed.boardPieceControlIconQueues.slice(0, BOARD_SLOT_COUNT).forEach((storedQueues, slotIndex) => {
+        boardPieceControlIconQueues[slotIndex] = deserializePieceControlIconQueues(storedQueues);
       });
     }
 
@@ -1484,11 +1662,14 @@ function restoreState() {
     solverMode = normalizeSolverMode(parsed.solverMode);
     activeBoardIndex = normalizeBoardSlotIndex(parsed.activeBoardIndex);
     boardState = boardStates[activeBoardIndex];
+    pieceControlIconQueues = boardPieceControlIconQueues[activeBoardIndex];
     regionClickInput.checked = regionClickEnabled;
     liveSolveInput.checked = liveSolveEnabled;
     cornerPackageInput.checked = cornerPackageEnabled;
     solverModeSelect.value = solverMode;
 
+    renderPieceCounts();
+    renderStoredSolution();
     paintBoard();
     updateBoardSlotButtons();
     updateMagicianRecommendation();
@@ -1502,6 +1683,9 @@ function restoreState() {
     solverModeSelect.value = solverMode;
     activeBoardIndex = 0;
     boardState = boardStates[activeBoardIndex];
+    pieceControlIconQueues = boardPieceControlIconQueues[activeBoardIndex];
+    renderPieceCounts();
+    boardSolutionPlacements.fill(null);
     updateBoardSlotButtons();
   }
 }
