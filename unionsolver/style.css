@@ -154,6 +154,13 @@ select {
   line-height: 1.15;
 }
 
+.title-summary {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
 .theme-toggle {
   flex: 0 0 auto;
   align-self: end;
